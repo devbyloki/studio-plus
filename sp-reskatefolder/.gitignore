@@ -1,0 +1,6 @@
+/build/
+/vendor/
+/out/
+*.user
+.vs/
+/.claude/

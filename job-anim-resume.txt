@@ -1,0 +1,4 @@
+You were stopped early on purpose (the player is pacing usage). Resume your task with a NARROWER SCOPE and work economically (fewer exploratory runs, no broad sweeps):
+- The player ONLY cares about the rider STANDING on the scooter, PUSHING, and HOLDING THE BARS while riding (idle / rolling / push start, loop, stop; carve lean only if it is the same clip family and cheap). Ignore tricks, airs, grinds, manuals, bails entirely.
+- Keep the steps: short research note (only the clips above), the no-change roundtrip test mod #1, the Blender re-pose scripts with the data-driven targets JSON, previews you check yourself, test mod #2 "scooter stance", and a small registry command.
+Carry on from where you left off (check git status first), commit on sp/scooter-anim, then print the final report.

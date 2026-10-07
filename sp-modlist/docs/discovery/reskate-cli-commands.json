@@ -1,0 +1,1425 @@
+[
+ {
+  "group": "maps",
+  "commands": [
+   {
+    "name": "compile-map",
+    "purpose": "Builds a custom Skate map into a native Frostbite Patch staging folder. Input is a .blend or .fbx scene (it runs Blender headless with Studio's Native\\Blender\\studio_map_import.py to make a normalized map export first) or an already normalized map folder (one holding map.json). It can also merge enabled .fbmod files into the same Patch and, with --deploy, install the result into <game>\\Mods.",
+    "signature": "reskate_cli compile-map <game-root> <map.blend|map.fbx|normalized-map-dir> <staging-root> [--deploy] [--mod-folder <name>] [--blender <blender.exe>] [--pause-map <2d|3d>] [--time-of-day <morning|noon|afternoon|evening|night>] [--stream|--no-stream] [--cell-size <200|100|50>] [--cell-load-distance <m>] [--vista-ratio <x>] [--vista-error <m>] [--no-lods] [--lod-ratios <a,b,...>] [--lod-distances <m,m,...>] [--lod-min-triangles <n>] [--no-gi] [--enlighten] [--enlighten-open-sky] [--gi-enlighten-spacing <m>] [--gi-enlighten-gain <x>] [--no-auto-reflection] [--bam-lighting|--no-bam-lighting] [--no-live-tod] [--gi-intensity <x>] [--gi-rays <n>] [--gi-lods <1-4>] [--gi-sky <lux>] [--gi-sun <lux>] [--gi-bounce <x>] [--gi-sun-rotation <x,y>] [enabled.fbmod ...]",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder. Read for indexing and donor assets. Written to only with --deploy (into Mods).",
+      "values": "path"
+     },
+     {
+      "name": "map",
+      "kind": "positional",
+      "required": true,
+      "meaning": "A .blend/.fbx scene, or a normalized map folder containing map.json. The map ID comes from the scene file name (discmap.blend becomes level dingolevel_reskate_discmap).",
+      "values": "path; a missing file gives 'map scene was not found: <path>'"
+     },
+     {
+      "name": "staging-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Output staging folder. Created if missing. Rebuilding into a folder Studio already owns works. A non-empty folder without the .reskate-studio-staging marker is refused.",
+      "values": "path"
+     },
+     {
+      "name": "enabled.fbmod ...",
+      "kind": "positional",
+      "required": false,
+      "meaning": "Any further non-flag arguments are treated as .fbmod files to merge into the Patch (reported as included-mods / conflicts). Unknown flags such as --bogus land here too and fail with 'could not open binary input' late in the run.",
+      "values": "0..n paths"
+     },
+     {
+      "name": "--deploy",
+      "kind": "flag",
+      "required": false,
+      "meaning": "Install the staged Patch into <game>\\Mods. NOT RUN (safety rule). Its checks, per strings: Skate.exe SHA-256 must match the build, staging and game must be separate trees, refuses a Mods folder not managed by Studio, writes reskate-levels.json and a deployment receipt.",
+      "values": "none"
+     },
+     {
+      "name": "--mod-folder",
+      "kind": "option",
+      "required": false,
+      "meaning": "Name of the Mods subfolder for --deploy. Without --deploy it is accepted and ignored: '.bad' was not rejected. The name rule from strings is 1-64 letters, digits, spaces, '_', '-' or '.', not starting with '.'.",
+      "values": "name; missing value gives '--mod-folder requires a name'"
+     },
+     {
+      "name": "--blender",
+      "kind": "option",
+      "required": false,
+      "meaning": "Path to blender.exe for .blend/.fbx input. Optional: it auto-found Blender 5.2 under C:\\Program Files\\Blender Foundation. Without it and without the RESKATE_BLENDER env var, a missing Blender fails with 'Blender was not found; pass --blender <path to blender.exe> or set RESKATE_BLENDER'.",
+      "values": "path"
+     },
+     {
+      "name": "--pause-map",
+      "kind": "option",
+      "required": false,
+      "meaning": "Pause-menu map render style, passed through to the Blender converter",
+      "values": "2d|3d (converter default 3d); anything else gives '--pause-map requires 2d or 3d'"
+     },
+     {
+      "name": "--time-of-day",
+      "kind": "option",
+      "required": false,
+      "meaning": "Starting or fixed time of day",
+      "values": "morning|noon|afternoon|evening|night; others give 'unknown time of day <x>' (exit 1, checked immediately)"
+     },
+     {
+      "name": "--stream / --no-stream",
+      "kind": "flag",
+      "required": false,
+      "meaning": "Stream render meshes through WorldPartition cells or keep them resident. Default appears to be no streaming for a tiny map (render-cells=0).",
+      "values": "none"
+     },
+     {
+      "name": "--cell-size",
+      "kind": "option",
+      "required": false,
+      "meaning": "Streaming cell size in metres",
+      "values": "200|100|50. The prefilter only checks that a value is present; 75 failed late (after export and about 5 s) with 'streaming cell size must be 200, 100 or 50 metres'"
+     },
+     {
+      "name": "--cell-load-distance",
+      "kind": "option",
+      "required": false,
+      "meaning": "Cell load distance in metres",
+      "values": "number"
+     },
+     {
+      "name": "--vista-ratio",
+      "kind": "option",
+      "required": false,
+      "meaning": "Vista proxy simplification ratio",
+      "values": "number"
+     },
+     {
+      "name": "--vista-error",
+      "kind": "option",
+      "required": false,
+      "meaning": "Vista proxy error in metres",
+      "values": "number"
+     },
+     {
+      "name": "--no-lods",
+      "kind": "flag",
+      "required": false,
+      "meaning": "Disable mesh LOD generation",
+      "values": "none"
+     },
+     {
+      "name": "--lod-ratios",
+      "kind": "option",
+      "required": false,
+      "meaning": "LOD triangle ratios",
+      "values": "comma-separated numbers. A count that differs from --lod-distances only warns: 'using the first N of each'"
+     },
+     {
+      "name": "--lod-distances",
+      "kind": "option",
+      "required": false,
+      "meaning": "LOD switch distances in metres",
+      "values": "comma-separated numbers"
+     },
+     {
+      "name": "--lod-min-triangles",
+      "kind": "option",
+      "required": false,
+      "meaning": "Minimum triangles for a mesh to get LODs",
+      "values": "integer"
+     },
+     {
+      "name": "--no-gi",
+      "kind": "flag",
+      "required": false,
+      "meaning": "Disable baked GI probes",
+      "values": "none"
+     },
+     {
+      "name": "--enlighten",
+      "kind": "flag",
+      "required": false,
+      "meaning": "Build Enlighten probes and input systems (warns 'experimental')",
+      "values": "none"
+     },
+     {
+      "name": "--enlighten-open-sky",
+      "kind": "flag",
+      "required": false,
+      "meaning": "Enlighten open-sky mode. Found in strings, not in the usage line. Accepted in a real run.",
+      "values": "none"
+     },
+     {
+      "name": "--gi-enlighten-spacing",
+      "kind": "option",
+      "required": false,
+      "meaning": "Enlighten probe spacing in metres (4 gave a 10x2x10 grid on a 40 m map)",
+      "values": "number"
+     },
+     {
+      "name": "--gi-enlighten-gain",
+      "kind": "option",
+      "required": false,
+      "meaning": "Enlighten gain. Found in strings, not in the usage line. Accepted.",
+      "values": "number"
+     },
+     {
+      "name": "--no-auto-reflection",
+      "kind": "flag",
+      "required": false,
+      "meaning": "Do not auto-place reflection probes",
+      "values": "none"
+     },
+     {
+      "name": "--bam-lighting / --no-bam-lighting",
+      "kind": "flag",
+      "required": false,
+      "meaning": "Include or exclude BAM's Lighting_Global for live time-of-day swaps. Including it is the default and warns that it ships without Enlighten for every level while installed. --bam-lighting is only in strings.",
+      "values": "none"
+     },
+     {
+      "name": "--no-live-tod",
+      "kind": "flag",
+      "required": false,
+      "meaning": "Disable live time-of-day swapping",
+      "values": "none"
+     },
+     {
+      "name": "--gi-intensity / --gi-rays / --gi-sky / --gi-sun / --gi-bounce",
+      "kind": "option",
+      "required": false,
+      "meaning": "GI bake tuning: intensity factor, ray count, sky lux, sun lux, bounce factor",
+      "values": "number; a missing value gives '<flag> requires a value'"
+     },
+     {
+      "name": "--gi-lods",
+      "kind": "option",
+      "required": false,
+      "meaning": "GI LOD count",
+      "values": "1-4 per usage, but 7 was accepted without error (the test map had gi-cells=0)"
+     },
+     {
+      "name": "--gi-sun-rotation",
+      "kind": "option",
+      "required": false,
+      "meaning": "Sun rotation for the GI bake",
+      "values": "x,y degrees; '30' gives '--gi-sun-rotation takes x,y degrees' (exit 1, checked immediately)"
+     }
+    ],
+    "output": "stderr carries progress. For .blend input it first prints 'blender=<path>' and 'export=%TEMP%\\ReSkateStudio\\MapExport\\<id>', then '[export NN%] ...' lines from Blender, written with no newline between some, then '[export] finished in Xs'. Next come timestamped steps '[0.0s] Reading normalized map export', 'Indexing native game assets', 'Checking Skate.exe SHA-256', about 245 'Slicing pause-map tile i of 245' lines, the staged bundle names, '[N s] done', and 'warning: ...' lines. stdout on success is key=value: toc=, cas=, layout= (staged paths), triangles, render-cells, vista-cells, lod-meshes, lod-triangles, vista-triangles, lights, tod-lights, collision-resources, collision-stream-bundles, shadow-profile-bundles/assets/components, ebx, resources, chunks, gi-cells, gi-probes, included-mods, conflicts (and deployed= with --deploy, per strings). Errors are a single stderr line.",
+    "writes": "<staging-root>\\.reskate-studio-staging (marker 'ReSkate Studio staging v1') and <staging-root>\\Patch\\ containing initfs_win32, layout.toc, .reskate-studio-patch (records skate_sha256), reskate-build.json ({schema, tool, version 1.0.0, built, map}), reskate-levels.json (level asset, displayName, startPoints), Win32\\globals.toc, Win32\\levels\\game\\dingolevel_reskate_<id>\\*.toc, Win32\\levels\\game\\dingolevel_root\\dingolevel_root.toc and Win32\\configurations\\layout\\{default,initial}installpackage\\cas_01.cas (about 20 MB total for a cube on a plane). Also: a temporary %TEMP%\\ReSkateStudio\\MapExport\\<id>\\ that is deleted afterwards, leaving <id>.performance.json; the cache %TEMP%\\ReSkateStudio\\Cache\\<skate-sha256>\\map-donors-*.tsv; and, seen after .blend-input runs, assets\\<id>\\export\\map.png and map_clouds.png under the current working directory. With --deploy it also writes <game>\\Mods\\<folder> (not exercised).",
+    "verified": "ran-successfully. Real runs on DA-PC, all WITHOUT --deploy, with staging under C:\\dev\\studio-plus-discovery\\map: a .blend from Blender 5.2 (plane, cube, 'spawn' empty), exit 0 in 11.6 s; the normalized folder as input with --no-stream --time-of-day night --no-gi --no-lods --mod-folder, exit 0 in 8.5 s; a long flag set including --stream --cell-size 50 --enlighten --enlighten-open-sky --bam-lighting --gi-enlighten-gain and LOD/vista options, exit 0. Error cases run: bad time of day, cell size 75, unknown flag, missing input, missing fbmod, foreign non-empty staging, mismatched LOD counts, bad sun rotation. --deploy was never run; its behaviour comes from strings only.",
+    "example": "reskate_cli compile-map \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Skate\" C:\\dev\\studio-plus-discovery\\map\\discmap.blend C:\\dev\\studio-plus-discovery\\map\\pkg1 --blender \"C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe\"",
+    "exit_codes": "0 success; 1 any error (bad option value, missing input, foreign staging, unreadable fbmod, late cell-size failure); 2 generic usage when fewer than 3 positionals are given",
+    "runtime": "About 8-9 s from a normalized folder and about 11-12 s from a .blend for a trivial map (Blender export about 3 s, game indexing about 2 s, pause-map slicing about 4 s). Real maps will take much longer.",
+    "notes": "Validation timing matters for a wrapper. --time-of-day, --pause-map and --gi-sun-rotation format errors fail instantly. The --cell-size value, unknown flags and missing fbmods only fail after the full export and authoring (8-11 s), so ReSkate Studio+ should validate these itself first. Failed late runs did not create the staging folder when it did not already exist. When a .blend is given, the CLI calls Blender with studio_map_import.py from <cli dir>\\Native\\Blender ('Studio's Blender converter (studio_map_import.py) was not found near reskate_cli' otherwise). It also accepts the env var RESKATE_BLENDER and appears to read RESKATE_MAP_PROGRESS JSON lines from the converter. The Studio GUI calls Blender directly: blender --background --factory-startup --disable-autoexec --python studio_map_import.py -- --input X --output Y --map-id ID --map-name NAME --pause-map 2d|3d --timeout-seconds N (other converter options: --scale, --bake-size, --no-procedural-bake). It then passes the normalized folder to compile-map. Build Skate Map.bat uses: compile-map \"<game>\" \"<blend>\" \"%USERPROFILE%\\Desktop\\<name>_package\" --deploy, and waits while Skate.exe is running."
+   },
+   {
+    "name": "map",
+    "purpose": "Validates and summarises a normalized map export folder (the folder holding map.json, meshes\\, collision\\, textures\\ and ui\\ that the Blender converter produces). Read-only inspection.",
+    "signature": "reskate_cli map <normalized-map-dir>",
+    "args": [
+     {
+      "name": "normalized-map-dir",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Folder containing map.json. It is not a game root: giving the game root fails with 'could not open <root>\\map.json'.",
+      "values": "path"
+     }
+    ],
+    "output": "stdout key=value: name, objects, materials, glb-files, vertices, triangles, collision-objects, collision-triangles, collision-resources, collision-parts, unique-collision-files, unique-collision-triangles. Errors on stderr, for example 'normalized map directory does not exist', 'could not open <dir>\\map.json', and many map.json schema messages from strings: 'map.json must use Y-up coordinates', 'map asset is missing: ', 'map object transform must contain 12 numbers', and so on.",
+    "writes": "none observed",
+    "verified": "ran-successfully. Ran on C:\\dev\\studio-plus-discovery\\map\\norm\\discmap, produced by running studio_map_import.py in Blender 5.2: exit 0 with name=discmap objects=8 materials=1 glb-files=10 vertices=156 triangles=62 ... Also ran with the game root (exit 1, could not open map.json), with a nonexistent folder (exit 1) and with an extra --verbose (ignored, same output).",
+    "example": "reskate_cli map C:\\dev\\studio-plus-discovery\\map\\norm\\discmap",
+    "exit_codes": "0 valid; 1 missing folder, missing map.json or invalid map.json; 2 no path (generic usage)",
+    "runtime": "under 0.1 s",
+    "notes": "Extra trailing arguments are ignored. This is a cheap pre-flight check before compile-map when the input is a normalized folder."
+   },
+   {
+    "name": "level-preview",
+    "purpose": "Loads one level EBX from the game and reports what a preview of it would contain: placements, unique and expanded meshes, triangles and materials. A diagnostic or statistics pass with no image output.",
+    "signature": "reskate_cli level-preview <game-root> <level-ebx-asset>",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder (read-only)",
+      "values": "path"
+     },
+     {
+      "name": "level-ebx-asset",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Level EBX asset name as listed by 'levels', for example levels/game/bam_levelroot/commlot_piers_02_streetpark_06",
+      "values": "string"
+     }
+    ],
+    "output": "stdout key=value: placements, unique-meshes, unique-vertices, unique-triangles, expanded-vertices, expanded-triangles, material-variants, resolved-materials, udim-materials, material-warnings, visited-objects, visited-containers, elapsed-seconds. Errors: 'level-preview requires an EBX asset name' (game root only), 'level EBX was not found', 'MeshSet resource is not indexed'.",
+    "writes": "none observed (no new files in the working directory)",
+    "verified": "ran-successfully. levels/game/bam_levelroot/commlot_piers_02_streetpark_06 gave exit 0 (placements=360 unique-meshes=30 unique-triangles=11098 expanded-triangles=48312 ...); levels/nope/nope gave exit 1 'level EBX was not found'; the game root alone gave exit 1.",
+    "example": "reskate_cli level-preview \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Skate\" levels/game/bam_levelroot/commlot_piers_02_streetpark_06",
+    "exit_codes": "0 ok; 1 missing asset argument or asset not found; 2 no args (generic usage)",
+    "runtime": "about 2.6-2.8 s, mostly game indexing; the preview itself took 0.01 s",
+    "notes": "The Studio GUI probably renders the real 3D preview itself. This CLI command only gives counts."
+   },
+   {
+    "name": "levels",
+    "purpose": "Indexes the game and lists level containers (level, sublevel, layer and schematic EBX assets) with a total count.",
+    "signature": "reskate_cli levels <game-root> [display-limit]",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder (read-only)",
+      "values": "path"
+     },
+     {
+      "name": "display-limit",
+      "kind": "positional",
+      "required": false,
+      "meaning": "How many names to print",
+      "values": "unsigned integer, default 20; 0 prints only the count; non-numeric gives 'invalid stoull argument' (exit 1)"
+     }
+    ],
+    "output": "stdout: one level asset path per line (for example levels/game/bam_levelroot/commlot_piers_02_streetpark_06), in index order, not sorted, then 'level-containers=6084'",
+    "writes": "none",
+    "verified": "ran-successfully: with no limit (20 lines + level-containers=6084), with 5, with 0 (count only), and with 'abc' (exit 1 invalid stoull argument)",
+    "example": "reskate_cli levels \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Skate\" 5",
+    "exit_codes": "0 ok; 1 bad limit; 2 no path (generic usage)",
+    "runtime": "about 3.4 s",
+    "notes": "To get the full list, pass a large limit such as 100000. The error string 'levels accepts an optional display limit' exists, presumably for extra arguments."
+   },
+   {
+    "name": "layout",
+    "purpose": "Dumps the game's Data\\layout.toc (Frostbite layout) as an indented tree: superBundles, fs, install chunk tables, installManifest (installChunks with id, name, installBundle, flags, sizes, language), installGroups, settings and meta ownables.",
+    "signature": "reskate_cli layout <game-root>",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "A folder containing Data\\layout.toc. Any folder works, for example a fake root holding just Data\\layout.toc. Passing the layout.toc file itself fails with 'could not open binary input'. It reads Data\\layout.toc and ignored a corrupt Patch\\layout.toc placed beside it.",
+      "values": "path"
+     }
+    ],
+    "output": "stdout: an indented text tree of about 17 KB, for example 'superBundles (24)' / '    name = Win32/buildkititems' / 'fs (1)' / 'head = 625200' / 'installManifest (13)' / '  installChunks (16)' / '      id = 167afc36-...' / 'estimatedSize = 713996' ... / 'meta (1)'",
+    "writes": "none",
+    "verified": "ran-successfully against the real game root, a fake root with copied Data\\layout.toc, and a fake root with a corrupt Patch\\layout.toc (still exit 0). Passing the toc file path gives exit 1.",
+    "example": "reskate_cli layout \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Skate\"",
+    "exit_codes": "0 ok; 1 cannot open or parse (stderr 'could not open binary input', or layout header errors such as 'layout is missing its Frostbite header'); 2 no path",
+    "runtime": "under 0.1 s",
+    "notes": "To inspect a staged Patch layout, point it at a folder whose Data\\layout.toc is that file. It does not take the toc path directly, unlike layout-cas and layout-roundtrip."
+   },
+   {
+    "name": "layout-cas",
+    "purpose": "Decodes the CAS archive tables (layeredInstallChunkFiles and unlayeredInstallChunkFiles) inside a layout.toc file.",
+    "signature": "reskate_cli layout-cas <layout.toc file>",
+    "args": [
+     {
+      "name": "layout.toc",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Path to a layout.toc file, not the game root (the game root gives 'could not open binary input')",
+      "values": "file path"
+     }
+    ],
+    "output": "stdout: 'layeredInstallChunkFiles bytes=584' followed by lines '  archive=1 catalog=0x7837152c padding=0x0', then 'unlayeredInstallChunkFiles bytes=72' with the same line format. Error per strings: '<table> is not an 8-byte record table'.",
+    "writes": "none",
+    "verified": "ran-successfully on <game>\\Data\\layout.toc (read-only) and on a copy. The game root as argument gives exit 1.",
+    "example": "reskate_cli layout-cas \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Skate\\Data\\layout.toc\"",
+    "exit_codes": "0 ok; 1 cannot open or parse; 2 no path",
+    "runtime": "under 0.1 s",
+    "notes": "Useful to check that a staged Patch\\layout.toc references the expected cas archives."
+   },
+   {
+    "name": "layout-roundtrip",
+    "purpose": "Parses a layout.toc and re-encodes it to check that the encoder is lossless; can optionally write the re-encoded file.",
+    "signature": "reskate_cli layout-roundtrip <layout.toc file> [output.toc]",
+    "args": [
+     {
+      "name": "layout.toc",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Path to a layout.toc file (a folder gives 'could not open binary input')",
+      "values": "file path"
+     },
+     {
+      "name": "output.toc",
+      "kind": "positional",
+      "required": false,
+      "meaning": "If given, the re-encoded layout is written here. Without it nothing is written (verified: the source file was unchanged and no new files appeared).",
+      "values": "file path"
+     }
+    ],
+    "output": "stdout: 'source-bytes=14663', 'encoded-bytes=14663', 'body-identical=true'. Error per strings: 'could not write round-tripped layout'.",
+    "writes": "Only the optional output file (rt_out.toc, 14663 bytes in the test). Never the input file.",
+    "verified": "ran-successfully on a copy of Data\\layout.toc in C:\\dev\\studio-plus-discovery\\map\\fakeroot, with and without an output path. A folder argument gives exit 1.",
+    "example": "reskate_cli layout-roundtrip C:\\dev\\studio-plus-discovery\\map\\fakeroot\\Data\\layout.toc C:\\dev\\studio-plus-discovery\\map\\rt_out.toc",
+    "exit_codes": "0 ok (also when body-identical is false is unknown: not observed); 1 open, parse or write failure; 2 no path",
+    "runtime": "under 0.1 s",
+    "notes": "To be safe, always pass a copied input and an output path outside the game root."
+   },
+   {
+    "name": "shadow-profiles",
+    "purpose": "Indexes the game and counts the native shadow-profile data that compile-map reuses: bundles, assets and components.",
+    "signature": "reskate_cli shadow-profiles <game-root>",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder (read-only)",
+      "values": "path"
+     }
+    ],
+    "output": "stdout: 'bundles=21' / 'assets=18' / 'components=18'",
+    "writes": "none",
+    "verified": "ran-successfully on the real game root, exit 0. Extra arguments --patch and --verbose were silently ignored (same output).",
+    "example": "reskate_cli shadow-profiles \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Skate\"",
+    "exit_codes": "0 ok; 2 no path; 1 presumably on indexing failure (not observed)",
+    "runtime": "about 2.8 s",
+    "notes": "These counts correspond to compile-map's shadow-profile-bundles/assets/components output, which was 0 for the trivial test map."
+   }
+  ],
+  "group_notes": "I ran all runs on DA-PC with the working directory set to C:\\dev\\studio-plus-discovery\\map, and every output went there. The game root was only ever read. --deploy was never used. Each command prints the same generic usage line to stderr with exit 2 when given no arguments.\n\nFlags from strings that belong to compile-map: --mod-folder --blender --pause-map --enlighten --enlighten-open-sky --no-gi --bam-lighting --no-bam-lighting --no-live-tod --no-auto-reflection --time-of-day --stream --no-stream --cell-size --cell-load-distance --vista-ratio --vista-error --no-lods --lod-ratios --lod-distances --lod-min-triangles --gi-intensity --gi-enlighten-gain --gi-enlighten-spacing --gi-rays --gi-lods --gi-sky --gi-sun --gi-bounce --gi-sun-rotation --deploy. The usage line leaves out --enlighten-open-sky, --bam-lighting and --gi-enlighten-gain.\n\nFlags that do NOT belong to these 8 commands: --ratios, --distances and --error-per-metre belong to the hidden simplify-check command ('--ratios and --distances need the same count'). --patch belongs to mesh-bounds, gi-export, ebx-raw and similar hidden commands. --verbose sits next to fbmod-info/project-info. None of these had any effect on map or shadow-profiles.\n\ncompile-map uses Studio's Native\\Blender\\studio_map_import.py when given a .blend (converter version 2.11.2). The normalized map format it produces is what map validates.\n\nTest artefacts on DA-PC:\n- C:\\dev\\studio-plus-discovery\\map\\discmap.blend\n- normalized export: C:\\dev\\studio-plus-discovery\\map\\norm\\discmap\n- staged packages: pkg1, pkg2 and pkg3 under C:\\dev\\studio-plus-discovery\\map\n- copied layout: fakeroot\\Data\\layout.toc\n- round-tripped layout: rt_out.toc\n\nScripts are on DA-PI in /tmp/claude-1000/-home-pi5-nas-storage-projects-reskate/d583d1ac-0529-4b7b-9832-8cd5917cc033/scratchpad/disc-map: lib.ps1 and run.sh are the runner, t1-t9.ps1 are the probes, and str.txt holds the CLI strings."
+ },
+ {
+  "group": "mods",
+  "commands": [
+   {
+    "name": "compile-mod",
+    "purpose": "Compiles one or more binary .fbmod files against the installed game into a native Frostbite Patch staging folder (Patch/layout.toc, Patch/initfs_win32, Patch/Win32/... CAS archives and level TOCs). This is the build step; deploy-mod then copies the staged build into Mods.",
+    "signature": "reskate_cli compile-mod <game-root> <staging-dir> <mod.fbmod> [<mod.fbmod> ...]",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder. It must contain Skate.exe (SHA-256 hashed and stamped into the build) and the Data folder, and Oodle oo2core_9_win64.dll.",
+      "values": "directory path"
+     },
+     {
+      "name": "staging-dir",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Output folder. It is created if missing. If it already exists it must be empty or carry the .reskate-studio-staging marker, and then it is wiped and rebuilt. It must be outside the game directory.",
+      "values": "directory path"
+     },
+     {
+      "name": "fbmod",
+      "kind": "positional",
+      "required": true,
+      "meaning": "One or more binary FBMOD files, applied in order. A .fbproject is rejected ('file is not a binary FBMOD'). Any extra token, such as --verbose, is treated as an FBMOD path and fails with 'could not open binary input'.",
+      "values": ".fbmod path(s), version 6 format"
+     }
+    ],
+    "output": "On success, three lines on stdout:\nresources=3\nbundles=6\ntocs=6\nOn failure, one error line (stderr merged), for example: 'compile-mod requires a staging path and at least one FBMOD' (fewer than 3 args after the command), 'could not open <root>\\Skate.exe for SHA-256 (Windows 2)', 'file is not a binary FBMOD', 'could not open binary input', 'staging is not empty and is not owned by ReSkate Studio', 'Cosmetic shader parameter dependency is unavailable: <guid>' (a skin-tone-create fbmod failed this way), and from strings 'staging must be a dedicated folder outside the game directory'.",
+    "writes": "Only <staging-dir>: .reskate-studio-staging (text 'ReSkate Studio staging v1'), Patch\\.reskate-studio-patch (text 'ReSkate Studio native Patch v1' plus 'skate_sha256=<hex>'), Patch\\initfs_win32 (copied from the game), Patch\\layout.toc, Patch\\Win32\\configurations\\layout\\{defaultinstallpackage,initialinstallpackage}\\cas_01.cas (about 49 MB and 10 MB for a 3-resource animation mod), and Patch\\Win32\\levels\\game\\<level>\\<level>.toc for bam_levelroot, ftue_island, isle_of_grom, mpr, sdm_int_001 and sdm_int_002. The FBMODs are loaded before staging is touched: a missing FBMOD leaves no folder, but a compile error after that (the skin case) leaves a staging folder containing only the marker. Nothing was written to the game root (file count and newest mtime checked before and after).",
+    "verified": "ran-successfully: compile-mod <real game root> C:\\dev\\studio-plus-discovery\\mods\\out\\stage3 out\\anim.fbmod (an fbmod made with animation-import from the scooter push_regular_medium.fbx) gave exit 0. Also ran it with the same fbmod twice, re-ran into an existing owned staging folder (wiped and rebuilt, exit 0), and ran the error cases listed under output.",
+    "example": "reskate_cli compile-mod \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Skate\" C:\\dev\\studio-plus-discovery\\mods\\out\\stage3 C:\\dev\\studio-plus-discovery\\mods\\out\\anim.fbmod",
+    "exit_codes": "0 success; 1 any error; 2 when no args follow the command (prints the generic usage)",
+    "runtime": "about 3 to 4 s for a small animation mod (about 2.7 s of that is the game index load)",
+    "notes": "No flags found. The build is tied to the exact Skate.exe hash, and deploy-mod refuses it if Skate.exe changes. A skin-tone-create fbmod failed to compile with 'Cosmetic shader parameter dependency is unavailable', so not every fbmod the CLI itself produces will compile. Studio GUI labels from strings: 'Staging folder', 'Staging root containing Patch/layout.toc', 'CurrentProject.fbmod'."
+   },
+   {
+    "name": "deploy-mod",
+    "purpose": "Installs a compiled staging build into <game-root>\\Mods\\<mod-folder> as a transaction. It copies the staging Patch folder contents, verifies the copy, backs up any previous version, and writes a deploy receipt database in the game root.",
+    "signature": "reskate_cli deploy-mod <game-root> <staging-root> <mod-folder-name>",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder. It must contain a Data folder and a Skate.exe whose SHA-256 matches the skate_sha256 recorded in the staging build.",
+      "values": "directory path"
+     },
+     {
+      "name": "staging-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "A compile-mod output folder. It must contain Patch/layout.toc and Patch/initfs_win32.",
+      "values": "directory path"
+     },
+     {
+      "name": "mod-folder-name",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Name of the folder created under <game-root>\\Mods. It is a name, not a path.",
+      "values": "1-64 letters, digits, spaces, '_', '-' or '.', not starting with '.'"
+     }
+    ],
+    "output": "On success, five lines:\nmod=<game-root>\\Mods\\<name>\nbackup=<empty, or <game-root>\\.ReSkateStudio-Mod-backup\\<name> when a previous copy was replaced>\nretired-patch=<empty, or the path of a retired old-style root Patch>\nfiles=11\nbytes=64759357\nThere may also be a 'note: ...' line (from strings). Errors seen: 'deploy-mod requires <game-root> <staging-root> <mod-folder>', 'deploy target does not contain the Skate Data directory', 'staging folder must contain Patch/layout.toc and Patch/initfs_win32', 'mod folder name \".bad\" is not usable: 1-64 letters, digits, spaces, '_', '-' or '.', not starting with '.'', 'Skate.exe differs from this staged build; rebuild the mod before deploying'. From strings: 'This staged build has no Skate.exe SHA-256; rebuild it in Studio before deploying', 'staging and game folders must be separate directory trees', 'deployment paths cannot contain symbolic links or junctions: ', 'another ReSkate Studio deployment is already running', '... is not managed by ReSkate Studio; move it out of Mods first', 'refusing to replace ...', 'staged build exceeds the file-count limit', 'staged build contains no files'.",
+    "writes": "In <game-root>: Mods\\<name>\\ (a copy of staging\\Patch: .reskate-studio-patch, initfs_win32, layout.toc, Win32\\...), .ReSkateStudio-last-deploy.db (binary key/value receipt with version, state=Deployed, gameRoot, modRoot, backupRoot, retiredPatch, displacedRoot), and on redeploy .ReSkateStudio-Mod-backup\\<name>\\ holding the previous copy. Temporary or transaction folders from strings: .ReSkateStudio-Mod-pending-*, .ReSkateStudio-Mod-rollback-*, .ReSkateStudio-Mod-failed-*, .ReSkateStudio-Mod-removed-*, .ReSkateStudio-Patch-backup-*, .ReSkateStudio-Patch-retired-*. It can retire a root Patch folder marked .frosty-managed-skate-patch and uses a mutex named Local\\ReSkateStudioPatch_*.",
+    "verified": "ran-successfully against a FAKE game root only: C:\\dev\\studio-plus-discovery\\mods\\fakegame (an empty Data folder plus a copy of Skate.exe). The first deploy and a redeploy (which created the backup) both exited 0. The SHA-mismatch, bad-name, missing-Data and non-staging errors were also triggered with fake roots. It was never run against the real game.",
+    "example": "reskate_cli deploy-mod C:\\dev\\studio-plus-discovery\\mods\\fakegame C:\\dev\\studio-plus-discovery\\mods\\out\\stage3 DiscTest",
+    "exit_codes": "0 success; 1 any error; 2 with no args (generic usage)",
+    "runtime": "0.3 to 0.4 s for about 65 MB (local copy)",
+    "notes": "The game-root check only looks for a Data folder and a Skate.exe with the matching hash, so a wrapper can test deploys into a fake root. The string 'deploy-patch' sits beside deploy-mod in the strings, but 'reskate_cli deploy-patch' prints the generic usage (exit 2), so it is not a separate command. Related: compile-map has --deploy and --mod-folder <name>, and skin-tone-create has --deploy <mod-folder>; those belong to other commands."
+   },
+   {
+    "name": "project-info",
+    "purpose": "Prints the metadata and resource list of a ReSkate Studio .fbproject file. Read only.",
+    "signature": "reskate_cli project-info <file.fbproject>",
+    "args": [
+     {
+      "name": "file.fbproject",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Project file to inspect. A .fbmod or .glb gives 'project format is unsupported'. Extra args such as --verbose are ignored.",
+      "values": "file path"
+     }
+    ],
+    "output": "Key=value header, then one line per resource:\ntitle=Razor Scooter\nauthor=\nprofile=Skate\nhead=625200\nresources=14\n3 6a76d5b0-f8e8-556c-454e-c038e7d63973 bytes=259056\n2 characters/skateboard/static/static_skateboard_mesh bytes=2992\n1 characters/customization/reskate/board_bottomart/scooter_ap bytes=3534 added\n...\nResource line format: '<kind> <name-or-chunk-guid> bytes=<n>[ added]'. Kind 1 lines carry EBX asset names, kind 2 lines resource names and kind 3 lines chunk GUIDs; this mapping is inferred from the names. ' added' marks a new asset rather than a replacement. Errors: 'could not open binary input' (missing file), 'project format is unsupported'.",
+    "writes": "none",
+    "verified": "ran-successfully on a copy of the scooter Untitled.fbproject at C:\\dev\\studio-plus-discovery\\mods\\in\\Untitled.fbproject, plus the missing-file, .glb and .fbmod error cases",
+    "example": "reskate_cli project-info C:\\dev\\studio-plus-discovery\\mods\\in\\Untitled.fbproject",
+    "exit_codes": "0 success; 1 error; 2 with no args (generic usage)",
+    "runtime": "under 0.1 s",
+    "notes": "Needs no game root. head=625200 also appears in fbmod-info output; it is probably the game data head or build the project was made against (inferred)."
+   },
+   {
+    "name": "fbmod-info",
+    "purpose": "Prints the header metadata of a binary .fbmod file. Read only.",
+    "signature": "reskate_cli fbmod-info <file.fbmod> [--verbose]",
+    "args": [
+     {
+      "name": "file.fbmod",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Binary FBMOD to inspect. It must come first: 'fbmod-info --verbose <file>' fails with 'could not open binary input'.",
+      "values": "file path"
+     },
+     {
+      "name": "--verbose",
+      "kind": "flag",
+      "required": false,
+      "meaning": "Accepted after the path. It gave no extra output for the animation and skin-tone fbmods tested. Strings next to it (' witness=', ' marker-bytes=', ' added=', 'costume=', ' marker=') suggest it adds native-costume recipe or witness detail for costume mods.",
+      "values": "none"
+     }
+    ],
+    "output": "title=Animation replacement\nauthor=\nprofile=Skate\nhead=625200\nversion=6\nresources=8\n(skin-tone-create fbmod: title=Skin Tones, author=ReSkate Studio, resources=18). Errors: 'file is not a binary FBMOD' (for example when given a .fbproject), 'could not open binary input', plus format errors from strings such as 'FBMOD format version is unsupported' and 'FBMOD payload exceeds bounds'.",
+    "writes": "none",
+    "verified": "ran-successfully on out\\anim.fbmod and out\\skin.fbmod, with and without --verbose; error cases run on a .fbproject and a missing file",
+    "example": "reskate_cli fbmod-info C:\\dev\\studio-plus-discovery\\mods\\out\\anim.fbmod --verbose",
+    "exit_codes": "0 success; 1 error; 2 with no args",
+    "runtime": "under 0.1 s",
+    "notes": "The resources count here can differ from the producing command's own count (animation-import reported resources=3, fbmod-info reports resources=8; skin 13 vs 18). The fbmod count probably includes metadata or icon slots (inferred). The --verbose costume output is not verified because no costume fbmod was available."
+   },
+   {
+    "name": "validate",
+    "purpose": "Sanity check of a game install: locates and decodes the first N assets (default 100) through the CAS and Oodle pipeline and reports how many decoded. Read only.",
+    "signature": "reskate_cli validate <game-root> [count]",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Game folder. It needs Skate.exe (SHA-256 hashed), Data, and oo2core_9_win64.dll; without the dll it fails with '<guid>: Skate Oodle codec was not found'.",
+      "values": "directory path"
+     },
+     {
+      "name": "count",
+      "kind": "positional",
+      "required": false,
+      "meaning": "Number of assets to decode. Parsed with stoull, so a non-number ('ebx', '--patch') fails with 'invalid stoull argument'. A count above the available assets fails with 'not enough located assets to complete validation'. A further arg was ignored.",
+      "values": "unsigned integer, default 100"
+     }
+    ],
+    "output": "decoded-assets=100\ndecoded-bytes=6558453\n(count 500: decoded-bytes=86452428). From strings there is also an EBX phase: 'decoded-ebx=', 'not enough EBX assets to complete validation', 'root type is unresolved'. Errors: 'could not open <root>\\Skate.exe for SHA-256 (Windows 2)'.",
+    "writes": "none observed (game root file count and newest mtime unchanged)",
+    "verified": "ran-successfully on the real game root with no count, with 500, with 100 50 and with 99999999 (error after 53.5 s); also ran on a fake root (Skate.exe copy, Data junction and a staged Patch) with exit 0",
+    "example": "reskate_cli validate \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Skate\" 500",
+    "exit_codes": "0 success; 1 error; 2 with no args",
+    "runtime": "about 2.7 s at the default or 500; about 54 s to exhaust every asset with a huge count",
+    "notes": "Useful as a quick 'is this game root usable' probe for a wrapper."
+   },
+   {
+    "name": "patch-audit",
+    "purpose": "Audits the native Patch folder at <game-root>\\Patch: counts patched assets, EBX, resources and chunks by type, checks ownership headers and encoded SHA-1 against bundle manifests, and lists stock replacements. Read only.",
+    "signature": "reskate_cli patch-audit <game-root>",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Game folder. It needs Skate.exe, Data and oo2core_9_win64.dll (otherwise 'Skate Oodle codec was not found', exit 1). The Patch folder audited is <game-root>\\Patch. Extra args (a staging path, --patch) are ignored.",
+      "values": "directory path"
+     }
+    ],
+    "output": "Zero or more 'stock-replacement=<asset name>' lines, then the counts:\nstock-replacement=animation/dingo/c_proto_onb_push_regular_medium_full_static\npatch-assets=3\npatch-ebx=2\npatch-resources=1\npatch-chunks=0\nmesh-resources=0\ntexture-resources=0\nphysics-resources=0\nownership-headers=3\nadded-assets=2\nstock-replacements=1\nOn the real game, which has no Patch folder, every count is 0. Integrity errors from strings: '<name>: encoded SHA-1 does not match the bundle manifest', '<name>: EBX instance has a non-stock ownership header'.",
+    "writes": "none observed",
+    "verified": "ran-successfully on the real game root (all zeros, exit 0) and on a fake root C:\\dev\\studio-plus-discovery\\mods\\fakegame3 (Skate.exe and oo2core copies, a Data junction to the real Data removed afterwards, and Patch copied from compile-mod staging), which gave the non-zero output above, exit 0",
+    "example": "reskate_cli patch-audit C:\\dev\\studio-plus-discovery\\mods\\fakegame3",
+    "exit_codes": "0 success; 1 error; 2 with no args",
+    "runtime": "about 5.3 to 6.3 s",
+    "notes": "It does not audit Mods\\<name> deployments or a staging folder directly. To audit a staged build, put it at <root>\\Patch in a fake root as described above."
+   },
+   {
+    "name": "initfs-info",
+    "purpose": "Summarises the game's initfs_win32 (the initial file system archive): file count and total bytes. Read only.",
+    "signature": "reskate_cli initfs-info <game-root>",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Game folder. It reads the initfs from the Data folder (it worked with a Data junction to the real game). Unlike the other game-root commands it does not need Skate.exe. Passing the initfs_win32 file itself, a staging folder or a staging Patch folder gives 'could not open binary input'.",
+      "values": "directory path"
+     }
+    ],
+    "output": "files=134\nbytes=732884\nError: 'could not open binary input'.",
+    "writes": "none",
+    "verified": "ran-successfully on the real game root and on fakegame3 (Data junction), both exit 0; error cases run on a fake root without Data, the initfs file path, and the staging and staging\\Patch folders",
+    "example": "reskate_cli initfs-info \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Skate\"",
+    "exit_codes": "0 success; 1 error; 2 with no args",
+    "runtime": "about 0.2 s",
+    "notes": "Whether it reads Data\\initfs_win32 or Patch\\initfs_win32 first is not settled: the staged Patch\\initfs_win32 is a byte copy of the game's, so both give the same numbers."
+   },
+   {
+    "name": "lua",
+    "purpose": "Locates a LuaAsset by exact EBX name and reports its embedded source file name, size and line count. Read only.",
+    "signature": "reskate_cli lua <game-root> <lua-asset-name>",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Game folder. It needs Skate.exe (SHA-256) and Data.",
+      "values": "directory path"
+     },
+     {
+      "name": "lua-asset-name",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Full lowercase EBX asset name, for example characters/lua/skaterlualoaderasset or characters/lua/luatattoocompositor. It is an exact match: a substring gives 'Lua asset was not found'. A non-Lua EBX gives 'EBX asset is not a LuaAsset'. A third arg (an output path) is ignored and no file is written.",
+      "values": "asset name string"
+     }
+    ],
+    "output": "resource=characters/lua/skaterlualoaderasset\nsource=Source/Characters/Lua/SkaterLoader.lua\nbytes=30103\nlines=789\nErrors: 'lua requires an asset name', 'Lua asset was not found', 'EBX asset is not a LuaAsset', 'could not open <root>\\Skate.exe for SHA-256 (Windows 2)', and from strings 'Compiled Lua bytecode; source text is unavailable' plus many Lua resource layout errors.",
+    "writes": "none (a trailing output path was ignored; no file was created)",
+    "verified": "ran-successfully on the real game with skaterlualoaderasset and luatattoocompositor; error cases run for a non-existent asset, a mesh asset, a substring, a missing asset arg and a fake root",
+    "example": "reskate_cli lua \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Skate\" characters/lua/skaterlualoaderasset",
+    "exit_codes": "0 success; 1 error; 2 with no args",
+    "runtime": "about 2.6 to 2.8 s (game index load)",
+    "notes": "The CLI prints only the summary, not the Lua source text. Replacement Lua authoring exists in the binary (strings 'replacement Lua source exceeds 64 MiB', 'Lua source replacement failed round-trip validation'), but no CLI argument for it was found under this command. Find Lua asset names with find-name <game-root> characters/lua/."
+   }
+  ],
+  "group_notes": "General rules seen across all 8 commands. Calling a command with no arguments prints the generic usage plus an animation-commands block, exit 2. Any other failure prints one error line, exit 1. Success is exit 0 with key=value lines on stdout. Every game-root command except initfs-info hashes <root>\\Skate.exe first. Commands that decode assets also need oo2core_9_win64.dll in the root. Loading the game index takes about 2.7 s.\n\nA test pipeline that runs entirely outside the game: animation-import <game-root> animation/dingo/c_proto_onb_push_regular_medium_full_static <scooter push_regular_medium.fbx> out\\anim.fbmod, then compile-mod <game-root> out\\stage3 out\\anim.fbmod, then deploy-mod <fake-root> out\\stage3 DiscTest. The fake root is just a Data folder plus a copy of Skate.exe. The take name inside the fbx gives the clip name.\n\nThere is no CLI command that turns an .fbproject into an .fbmod; the Studio GUI does that with 'Export .fbmod'. compile-mod rejects .fbproject. cosmetic-mesh-import onto the baker deck failed ('no item-specific geometry slot'). skin-tone-create made an fbmod that compile-mod then rejected.\n\nGame root unchanged: file count 137, newest mtime 06/10/2026, checked before and after each run. Skate was not running. All outputs are under C:\\dev\\studio-plus-discovery\\mods\\ (in, out\\stage1, out\\stage3, out\\unowned, fakegame, fakegame3, fakegame4, plus copies of Skate.exe of about 145 MB each in fakegame and fakegame3; the one in fakegame4 is a renamed dll). The Data junction in fakegame3 was removed after use. Local scripts are in /tmp/claude-1000/-home-pi5-nas-storage-projects-reskate/d583d1ac-0529-4b7b-9832-8cd5917cc033/scratchpad/disc-mods/ps/ and string dumps are in disc-mods/s.txt and st.txt."
+ },
+ {
+  "group": "assets",
+  "commands": [
+   {
+    "name": "assets",
+    "purpose": "Loads the game's asset index (superbundles, bundles, EBX, resources, chunks) and prints the counts. Works as a sanity check that a game root is valid and indexable.",
+    "signature": "reskate_cli assets <game-root> [--patch]",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder (the one holding Skate.exe and Data\\)"
+     },
+     {
+      "name": "--patch",
+      "kind": "flag",
+      "required": false,
+      "meaning": "Seen next to 'assets' in strings, presumably includes the Patch layer. Accepted but on this install the counts were the same with or without it.",
+      "values": "flag, no value"
+     }
+    ],
+    "output": "stdout, key=value lines: superbundles=24 / bundles=6056 / ebx=185301 / resources=145459 / chunks=98524. Any extra positional args are silently ignored. With no args, stderr shows the generic usage line.",
+    "writes": "none (checked the output dir and game root mtimes after the run)",
+    "verified": "ran-successfully: assets <G>, assets <G> --patch, assets <G> foo, and assets with no args",
+    "exit_codes": "0 ok; 2 no args (generic usage)",
+    "runtime": "~3 s",
+    "example": "reskate_cli assets \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Skate\"",
+    "notes": "Every command here returns exit 2 with the generic usage text when only the command name is given."
+   },
+   {
+    "name": "read",
+    "purpose": "Finds one asset by kind and name, decodes it from CAS and prints its locator metadata: GUID, resource id/type, encoded/decoded/expected sizes and the bundle it lives in. Does not dump the payload.",
+    "signature": "reskate_cli read <game-root> <ebx|res|chunk> <name>",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder"
+     },
+     {
+      "name": "kind",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Asset kind. 'resource' was also accepted as an alias for res.",
+      "values": "ebx | res | chunk (otherwise the error 'asset kind must be ebx, res, or chunk')"
+     },
+     {
+      "name": "name",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Asset path for ebx/res, matched case-insensitively (output is lowercase). For chunk it is presumably a chunk GUID (not confirmed with a real one)."
+     }
+    ],
+    "output": "stdout lines: name=, guid=, resource-id=, resource-type=, encoded=, decoded=, expected=, bundle=. Example for an ebx: name=items/cust_board/own_deckgraphic_baker_popsicle_00001 guid=0000... resource-id=0 resource-type=0 encoded=4772 decoded=12172 expected=12172 bundle=win32/characters/customization/configs/cas_main_sharedbundle. For res: resource-id=3582881321754535927 resource-type=1809719482. Strings also list superbundle=, which can presumably appear too.",
+    "writes": "none",
+    "verified": "ran-successfully: read <G> ebx <deck asset>, read <G> res thumbnail/tool/own_deckgraphic_baker_popsicle_00001, read <G> resource <same>, and the mixed-case name. Error paths ran too: bad kind, missing asset, missing name. read chunk was only tried with an all-zero GUID, which gave 'asset was not found'.",
+    "exit_codes": "0 ok; 1 with stderr 'read requires an asset kind and name' / 'asset kind must be ebx, res, or chunk' / 'asset was not found'; 2 no args",
+    "runtime": "~2.7 s (mostly loading the index)",
+    "example": "reskate_cli read \"C:\\...\\Skate\" ebx items/cust_board/own_deckgraphic_baker_popsicle_00001"
+   },
+   {
+    "name": "ebx",
+    "purpose": "Validation pass. Decodes the first N EBX assets in index order, prints the first 10 as 'name = RootType (k instances)', then prints the count. This is a decoder self-test, not a lister or filter.",
+    "signature": "reskate_cli ebx <game-root> [count]",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder"
+     },
+     {
+      "name": "count",
+      "kind": "positional",
+      "required": false,
+      "meaning": "Number of EBX to decode. Parsed with stoull, so a non-number gives 'invalid stoull argument'. 0, or more than are available (e.g. 200000), fails with 'not enough EBX assets to complete validation'.",
+      "values": "unsigned integer, default 100"
+     }
+    ],
+    "output": "stdout: up to 10 sample lines like 'world/materials/metal/steel_02_2x2m/metal_steel_02_2x2m_c = TextureAsset (1 instances)', then decoded-ebx=<N>",
+    "writes": "none",
+    "verified": "ran-successfully with no count, 5, 2000, 20000. Error runs: 0, 200000, and 'items/cust_board' (not a number).",
+    "exit_codes": "0 ok; 1 on a bad count or decode failure (message on stderr); 2 no args",
+    "runtime": "~3 s up to 20000; ~8.5 s with 200000 (which fails)",
+    "example": "reskate_cli ebx \"C:\\...\\Skate\" 5"
+   },
+   {
+    "name": "find-name",
+    "purpose": "Substring search over EBX and resource names. Prints matches tagged with their kind.",
+    "signature": "reskate_cli find-name <game-root> <substring> [limit]",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder"
+     },
+     {
+      "name": "substring",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Case-sensitive match against the lowercase index names, so uppercase input finds nothing (BAKER_POPSICLE_00001 gave matches=0)."
+     },
+     {
+      "name": "limit",
+      "kind": "positional",
+      "required": false,
+      "meaning": "Maximum number of matches. 0 behaves like 1. A non-number gives 'invalid stoull argument'.",
+      "values": "unsigned integer, default 100"
+     }
+    ],
+    "output": "stdout lines '<kind> <name>', with kind ebx or res, e.g. 'ebx items/cust_board/own_deckgraphic_baker_popsicle_00003', 'res thumbnail/tool/...'. Order is not sorted. Ends with matches=<n>. No match gives matches=0 with exit 0.",
+    "writes": "none",
+    "verified": "ran-successfully: baker_popsicle (56 matches), deckgraphic (stops at 100), deckgraphic 3, limit 0, an unknown string, an uppercase string, a non-numeric limit",
+    "exit_codes": "0 ok, including no matches; 1 'find-name requires a substring' or 'invalid stoull argument'; 2 no args",
+    "runtime": "~2.7 s",
+    "example": "reskate_cli find-name \"C:\\...\\Skate\" baker_popsicle"
+   },
+   {
+    "name": "find-type",
+    "purpose": "Lists EBX assets whose root type equals the given type name.",
+    "signature": "reskate_cli find-type <game-root> <RootType> [limit]",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder"
+     },
+     {
+      "name": "RootType",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Exact root type name, matched case-insensitively ('textureasset' works). A substring does not work: 'Texture' gives 0. A non-root type such as SkateboardItemData gives 0.",
+      "values": "e.g. TextureAsset, DelMarBaseItemAsset"
+     },
+     {
+      "name": "limit",
+      "kind": "positional",
+      "required": false,
+      "meaning": "Maximum number of matches. 0 behaves like 1.",
+      "values": "unsigned integer, default 20"
+     }
+    ],
+    "output": "stdout: one asset name per line (no kind prefix), then matches=<n>. E.g. DelMarBaseItemAsset with limit 100000 gave matches=3413.",
+    "writes": "none",
+    "verified": "ran-successfully: TextureAsset, textureasset, Texture, DelMarBaseItemAsset with no limit, 5, 0 and 100000, SkateboardItemData 3",
+    "exit_codes": "0 ok, including 0 matches; 1 'find-type requires a root type'; 2 no args",
+    "runtime": "~3 s when the limit is hit early; 8.5 to 10 s for a full scan (no match, or a very high limit)",
+    "example": "reskate_cli find-type \"C:\\...\\Skate\" DelMarBaseItemAsset 5"
+   },
+   {
+    "name": "ebx-values",
+    "purpose": "Fully decodes one EBX asset and prints every instance with its field values, plus its type descriptors and imports with their resolved names. This is the main 'inspect an asset' command.",
+    "signature": "reskate_cli ebx-values <game-root> <ebx-name> [--patch]",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder"
+     },
+     {
+      "name": "ebx-name",
+      "kind": "positional",
+      "required": true,
+      "meaning": "EBX asset path, case-insensitive"
+     },
+     {
+      "name": "--patch",
+      "kind": "flag",
+      "required": false,
+      "meaning": "Accepted, output unchanged on this install. Probably just ignored here; --patch is generic in other commands' strings."
+     }
+    ],
+    "output": "stdout, indented tree: 'root=<Type> file=<partition guid>', 'import[i] partition=<guid> instance=<guid>', 'instance[i] <Type> exported guid=<guid> raw=<hex>', then '  Field = value' lines. Strings are quoted, arrays print as 'Name [n]' with '[k] = ...', pointers as pointer(a,b), structs in { }. Then 'type[i] <Type> encoded=0x30 size=88 fields=10' and 'import[i] <part>/<inst> <resolved asset name>'. For the deck asset: root=DelMarBaseItemAsset, AssetPaths[0].AssetName=\"Deck_Baker_Graphic_00001_AP\".",
+    "writes": "none",
+    "verified": "ran-successfully on items/cust_board/own_deckgraphic_baker_popsicle_00001 (lowercase, mixed case, with --patch). Error run on no/such/asset.",
+    "exit_codes": "0 ok; 1 'ebx-values requires an asset name' / 'EBX asset was not found'; 2 no args",
+    "runtime": "~3 s",
+    "example": "reskate_cli ebx-values \"C:\\...\\Skate\" items/cust_board/own_deckgraphic_baker_popsicle_00001"
+   },
+   {
+    "name": "ebx-roundtrip",
+    "purpose": "Validation pass. Decodes and re-encodes the first N EBX assets and checks that the rebuilt graph is identical.",
+    "signature": "reskate_cli ebx-roundtrip <game-root> [count]",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder"
+     },
+     {
+      "name": "count",
+      "kind": "positional",
+      "required": false,
+      "meaning": "Number of EBX to round-trip. Parsed with stoull: an asset name gives 'invalid stoull argument'.",
+      "values": "unsigned integer, default 100"
+     }
+    ],
+    "output": "stdout: rebuilt-ebx=<N> on success. On failure, stderr shows '<asset>: <reason>'. Seen: 'animation/dingo/cdb_skatepedia_grindtricks: EBX floating-point field must be finite' (with N=10000 or 20000). Other strings: 'rebuilt graph identity changed', 'not enough EBX assets to complete round-trip validation'.",
+    "writes": "none",
+    "verified": "ran-successfully with default, 5, 2000, 5000. Failed (exit 1) with 10000 and 20000. One 20000 run exited 1 with an empty stderr. The reason is unknown; the rerun showed the message.",
+    "exit_codes": "0 ok; 1 on a round-trip failure or bad arg; 2 no args",
+    "runtime": "~3 s",
+    "example": "reskate_cli ebx-roundtrip \"C:\\...\\Skate\" 2000",
+    "notes": "Cannot be pointed at one asset. On build 25414733 it fails somewhere between 5000 and 10000 assets because of a non-finite float in a stock animation asset."
+   },
+   {
+    "name": "ebx-author",
+    "purpose": "Native authoring self-test. In memory, it builds a test world (texture, triangle mesh, physics, blueprint, layer, subworld, MeshVariationDatabase under world/custom/native_test and levels/game/native_test) from stock donors and prints the byte or count result for each authored piece.",
+    "signature": "reskate_cli ebx-author <game-root>",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder. Extra args are ignored."
+     }
+    ],
+    "output": "stdout key=value: texture=974 mesh=8382 physics=1366 blueprint=11908 layer=7246 subworld=10388 mvdb=30664 physics-resource=368 collision-wired=1. Possible stderr from strings: 'authored mesh has no exported MeshMaterial'.",
+    "writes": "none observed: the output dir was empty afterwards and nothing in the game root changed in the last 30 min",
+    "verified": "ran-successfully: ebx-author <G> and ebx-author <G> x",
+    "exit_codes": "0 ok; 2 no args; presumably 1 on an authoring failure (not observed)",
+    "runtime": "~2.7 s",
+    "example": "reskate_cli ebx-author \"C:\\...\\Skate\""
+   },
+   {
+    "name": "schema",
+    "purpose": "Prints the binary layout of one EBX asset: data range, instances with their fixup and descriptor indices, each type with size and alignment, each field with offset, type code, category and class index, and a hex prefix of the data.",
+    "signature": "reskate_cli schema <game-root> <ebx-name>",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder"
+     },
+     {
+      "name": "ebx-name",
+      "kind": "positional",
+      "required": true,
+      "meaning": "EBX asset path"
+     }
+    ],
+    "output": "stdout: 'root=TextureAsset data=0x20..0xba', 'instance[0] fixup=0 descriptor=0 offset=0x10 exported=1', 'type[i] <Type> size=56 align=8 fields=4', '  <Field> offset=40 type=2 category=0 class=5' (class=65535 means primitive). Enum types print members as fields with the value in offset=. Ends with data-prefix=<hex>. Large for complex assets (~20 KB for the deck item).",
+    "writes": "none",
+    "verified": "ran-successfully on the deck item asset and common/textures/default/neutral/neutral_c. Error run on no/such/asset.",
+    "exit_codes": "0 ok; 1 'schema requires an EBX asset name' / 'EBX asset was not found'; 2 no args",
+    "runtime": "~2.7 s",
+    "example": "reskate_cli schema \"C:\\...\\Skate\" common/textures/default/neutral/neutral_c"
+   },
+   {
+    "name": "cas",
+    "purpose": "Oodle CAS codec self-test. Compresses and decompresses a synthetic 1 MiB buffer through the game's Oodle DLL and prints the sizes. It does not read a CAS file.",
+    "signature": "reskate_cli cas <game-root>",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Valid Skate install, needed to load Oodle. Anything else gives 'Oodle CAS data requires a valid Skate installation'. Extra args are ignored, including a .cas path."
+     }
+    ],
+    "output": "stdout: decoded-bytes=1048576 / encoded-bytes=5920. A failure would print 'Oodle CAS round-trip changed its payload' (from strings).",
+    "writes": "none",
+    "verified": "ran-successfully: cas <G>, cas <G> <copied cas_14.cas>, cas <G> 4096 x (all the same output). Error runs: cas <cas file> and cas <nonexistent path>.",
+    "exit_codes": "0 ok; 1 not a valid game root; 2 no args",
+    "runtime": "<1 s",
+    "example": "reskate_cli cas \"C:\\...\\Skate\""
+   },
+   {
+    "name": "toc-stock",
+    "purpose": "Parses a single superbundle .toc file and prints its bundle count, chunk count and flags. The first argument is a TOC file, not the game root.",
+    "signature": "reskate_cli toc-stock <file.toc>",
+    "args": [
+     {
+      "name": "file.toc",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Path to a .toc file, e.g. <game>\\Data\\Win32\\items.toc. Read only. It was tested on copies."
+     }
+    ],
+    "output": "stdout: bundles=<n> / chunks=<n> / flags=<n>. ui.toc gave bundles=10 chunks=0 flags=4; items.toc gave bundles=2634 chunks=15581 flags=4.",
+    "writes": "none",
+    "verified": "ran-successfully on copies of ui.toc and items.toc under C:\\dev\\studio-plus-discovery\\assets. Error runs: the game-root dir ('could not open binary input'), a nonexistent file (same), a .cas file ('TOC envelope is invalid').",
+    "exit_codes": "0 ok; 1 'could not open binary input' / 'TOC envelope is invalid'; 2 no args",
+    "runtime": "<1 s",
+    "example": "reskate_cli toc-stock C:\\dev\\studio-plus-discovery\\assets\\items.toc",
+    "notes": "TOC files in this install: Data\\layout.toc, Data\\Win32\\{buildkititems,customization,globals,items,ui}.toc, levels\\game\\*\\*.toc, loc\\*.toc"
+   },
+   {
+    "name": "donors",
+    "purpose": "Picks the stock donor assets that native world/map authoring uses as templates and prints one per category.",
+    "signature": "reskate_cli donors <game-root>",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder. Extra args are ignored (a type name made no difference)."
+     }
+    ],
+    "output": "stdout 'Type=asset' lines: RigidMeshAsset=, TextureAsset=, PhysicsAsset=, ObjectBlueprint=, ObjectBlueprint+Physics=, LayerData=, SubWorldData=, DetachedSubWorldData=, MeshVariationDatabase=, then donors=10. E.g. MeshVariationDatabase=levels/game/bam_levelroot/bam_levelroot/meshvariationdb_win32.",
+    "writes": "none",
+    "verified": "ran-successfully: donors <G> and donors <G> RigidMeshAsset",
+    "exit_codes": "0 ok; 2 no args",
+    "runtime": "~2.6 s",
+    "example": "reskate_cli donors \"C:\\...\\Skate\""
+   }
+  ],
+  "group_notes": "I ran all 12 commands for real against the game root on DA-PC through a .ps1 runner (scratchpad/disc-assets/lib.ps1 and run.sh). None of them wrote anything I could find: I checked C:\\dev\\studio-plus-discovery\\assets and the game root for files changed in the last 30 minutes.\n\nThat folder now holds only my read-only copies of ui.toc, items.toc and cas_14.cas, which I used as safe inputs.\n\nBehaviour shared by all 12:\n- Command name alone: exit 2 and the generic usage text on stderr.\n- Missing required args, or an error: exit 1 with a one-line message on stderr.\n- Success: exit 0 with key=value or text on stdout.\n- Most commands take about 2.6 to 3 s, which is mostly loading the index (185301 EBX).\n- Optional numeric args are parsed with stoull, so a non-number gives 'invalid stoull argument'. A limit of 0 behaves like 1.\n\nWhich commands are tools and which are self-tests:\n- Useful lookups: find-name, find-type, ebx-values, schema, read, toc-stock.\n- Validation passes or self-tests with no target: assets, ebx, ebx-roundtrip, ebx-author, cas, donors.\n\nHidden, read-only commands found in strings that are not in the usage line and are relevant to this group:\n- ebx-raw <game-root> <ebx name> <output file> [--patch] (raw EBX export)\n- ebx-imports <game-root> <file.ebx> [--patch]\n- ebx-references <game-root> <asset> [asset...]\n- ebx-rewrite-diff <game-root> <asset>\n- find-type-usage <game-root> <type-substring> [limit]\n- find-string <game-root> <substring> [name-prefix]\n- find-importers <game-root> <name-prefix|-> <ebx name>...\n- asset-bundles <game-root> <ebx name>...\n- field-histogram <game-root> <field> [asset-prefix]\n- dump-res <game-root> <resource-type> <name-substring> <out-dir> [limit]\n- appearance-parameters (needs an asset name)\n- ebx-file (no usage string; signature unknown)\n\nI did not run any of these hidden commands."
+ },
+ {
+  "group": "media",
+  "commands": [
+   {
+    "name": "audio",
+    "purpose": "Look up a NewWaveAsset or LocalizedWaveAsset in the game, decode it through the bundled Native\\Audio\\vgmstream-cli.exe to PCM16 WAV in memory/temp, and print its metadata. It is a probe only: it does not write a WAV you can keep.",
+    "signature": "reskate_cli audio <game-root> <audio-asset-name>",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder (only read)"
+     },
+     {
+      "name": "audio-asset-name",
+      "kind": "positional",
+      "required": true,
+      "meaning": "EBX path of a NewWaveAsset or LocalizedWaveAsset, e.g. audio/physicsprops/assets/dgo_wb_obj_metal_rail_impact_low or audio/vo/text-to-speech_shippable/id_vo_statement_hi. Find them with: reskate_cli find-type <game-root> NewWaveAsset (or LocalizedWaveAsset)."
+     }
+    ],
+    "output": "stdout key=value lines: catalog-type= (empty in all runs), type=NewWaveAsset|LocalizedWaveAsset, channels=1, sample-rate=48000, duration=0.562771, codec=XAS, segments=1, wave-bytes=54070 (size of decoded RIFF WAVE). Errors on stderr as one line: 'audio requires an asset name', 'audio asset was not found', 'asset is not a NewWaveAsset or LocalizedWaveAsset' (catalog-type= is still printed to stdout first in that case). Codec names in strings: PCM16BE, XAS, EALayer3 v1, EALayer3 v2 PCM, EALayer3 v2 Spike, EA-MP3, EA Opus, EA ATRAC9, MultiStream Opus, MultiStream Opus (uncoupled), 'EA codec 0x..'.",
+    "writes": "No persistent output. Uses work files under %TEMP%\\ReSkateStudio\\CliAudio (cleaned up; nothing new left after runs). Old Studio folder unchanged (verified by before/after listing).",
+    "verified": "ran-successfully: on DA-PC against Steam game root with a NewWaveAsset, a LocalizedWaveAsset, a missing asset, a movie asset (wrong type) and no asset name.",
+    "example": "reskate_cli audio \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Skate\" audio/physicsprops/assets/dgo_wb_obj_metal_rail_impact_low",
+    "exit_codes": "0 success; 1 command error (missing asset name, not found, wrong type); 2 when the game root is also missing (prints generic usage).",
+    "runtime": "about 2.8-3.0 s (index load dominates)",
+    "notes": "Extra trailing args are silently ignored (tried an output .wav path, '1' and '99': same output, no file written), so there is no CLI way to choose a variation or save the WAV even though strings mention 'NewWave variation is out of range'. Decoder has a 2 minute timeout ('audio conversion exceeded two minutes'); requires Native\\Audio\\vgmstream-cli.exe next to the Studio ('bundled audio tool is missing: '). For an exportable WAV a wrapper must call vgmstream itself."
+   },
+   {
+    "name": "webm",
+    "purpose": "Locate a MovieTexture2Asset and validate its embedded WebM chunk (EBML header, segment, size matches EBX), printing basic stats. Does not extract the .webm file.",
+    "signature": "reskate_cli webm <game-root> <movie-asset-name>",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder (only read)"
+     },
+     {
+      "name": "movie-asset-name",
+      "kind": "positional",
+      "required": true,
+      "meaning": "EBX path of a MovieTexture2Asset, e.g. ui/videos/splash/vid_skate_logo_lockup_withaudio_v2_1920x1080. 9 exist; list with find-type <game-root> MovieTexture2Asset."
+     }
+    ],
+    "output": "stdout: bytes=978630, size=1920x1080, fps=30, duration=4.036. stderr one-liners: 'webm requires an asset name', 'movie asset was not found', 'asset is not a MovieTexture2Asset', plus validation errors like 'movie EBML header does not declare WebM', 'movie chunk size differs from EBX metadata'.",
+    "writes": "none (an extra output-path argument is ignored, no file created)",
+    "verified": "ran-successfully: on DA-PC with the splash video, with an extra output path, a missing asset, and an audio asset (wrong type).",
+    "example": "reskate_cli webm \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Skate\" ui/videos/splash/vid_skate_logo_lockup_withaudio_v2_1920x1080",
+    "exit_codes": "0 ok; 1 error; 2 usage when args are too few",
+    "runtime": "about 2.8 s"
+   },
+   {
+    "name": "video",
+    "purpose": "Decode a MovieTexture2Asset with Windows Media Foundation as a preview test: decodes the first BGRA frame, checks playback advances, and decodes the audio track to PCM16. Prints frame and audio sizes.",
+    "signature": "reskate_cli video <game-root> <movie-asset-name>   (exactly 3 args; any extra arg gives 'video requires an EBX asset name')",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder (only read)"
+     },
+     {
+      "name": "movie-asset-name",
+      "kind": "positional",
+      "required": true,
+      "meaning": "EBX path of a MovieTexture2Asset (same list as webm)"
+     }
+    ],
+    "output": "stdout: width=1920, height=1080, timestamp=0.003 (first frame), frame-bytes=8294400 (w*h*4 BGRA), playback-timestamp=0.036, audio-bytes=771884 (decoded PCM). stderr: 'video requires an EBX asset name', 'video EBX was not found', 'video decoder timed out', 'video decoder produced no complete first frame', 'video playback did not advance', 'video audio decoder timed out', 'Media Foundation failed while <step>', 'WebM contains no decoded video frame'.",
+    "writes": "Temporary video-*.webm under %TEMP%\\ReSkateStudio\\MediaWork (folder was created by the run, file cleaned up). No persistent output.",
+    "verified": "ran-successfully: on DA-PC with the splash video and ui/videos/s01_intro/dgo_video_season01_video_01 (audio-bytes=20640044); error runs with missing asset and with extra args.",
+    "example": "reskate_cli video \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Skate\" ui/videos/s01_intro/dgo_video_season01_video_01",
+    "exit_codes": "0 ok; 1 error (including wrong arg count, which returns in ~10 ms)",
+    "runtime": "about 3.2-3.4 s",
+    "notes": "Strict arg count, unlike audio/webm which ignore extras. Needs Media Foundation with WebM/VP9 support on the machine."
+   },
+   {
+    "name": "animation-info",
+    "purpose": "Describe a standalone animation clip (ClipControllerAsset): rig, skeleton, joint and channel counts, fps, duration and every DOF channel. With --project, reads the clip as modified by a project.",
+    "signature": "reskate_cli animation-info <game-root> <clip-asset> [--project <file.fbproject>]",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder (only read)"
+     },
+     {
+      "name": "clip-asset",
+      "kind": "positional",
+      "required": true,
+      "meaning": "EBX path of a ClipControllerAsset, e.g. animation/dingo/c_proto_onb_push_regular_medium_full_static"
+     },
+     {
+      "name": "--project",
+      "kind": "option",
+      "required": false,
+      "meaning": "An .fbproject whose overrides are applied before reading the clip (read only; hash unchanged after use)"
+     }
+    ],
+    "output": "stdout: rig=animation/dingo/animbase_default_rig, skeleton=animation/dingo/animbase_default_skeleton, joints=395, channels=87, fps=60, duration=2.5, then one line per channel 'dof=<uint32 id> name=<Joint>.<q|t|onboard|speed>' (87 lines for that clip). With --project pointing to an imported project the same clip reported channels=217 and printed no dof lines in that run. stderr: '<cmd> requires <game-root> <clip-asset>', 'Animation clip asset was not found', 'Select a ClipControllerAsset; blend/subtractive controllers are not standalone clips', 'Unknown/missing animation option: <arg>'.",
+    "writes": "none",
+    "verified": "ran-successfully: on DA-PC with the real clip, with --project, with a missing clip, with the hinted subtractive clip and a skeleton asset (both rejected).",
+    "example": "reskate_cli animation-info \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Skate\" animation/dingo/c_proto_onb_push_regular_medium_full_static",
+    "exit_codes": "0 ok; 1 error; 2 usage (prints the Animation commands block) when only the command name is given",
+    "runtime": "about 2.7-3.6 s",
+    "notes": "The hinted clip animation/dingo/subt_c_proto_onb_push_regular_medium_loop_02 is a subtractive controller and is rejected. The real clip name is the take name stored in the scooter FBX: animation/dingo/c_proto_onb_push_regular_medium_full_static."
+   },
+   {
+    "name": "animation-export",
+    "purpose": "Bake a game animation clip (optionally with project overrides) to an FBX with skeleton and one take.",
+    "signature": "reskate_cli animation-export <game-root> <clip-asset> <output.fbx> [--project <file.fbproject>]",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder (only read)"
+     },
+     {
+      "name": "clip-asset",
+      "kind": "positional",
+      "required": true,
+      "meaning": "ClipControllerAsset EBX path"
+     },
+     {
+      "name": "output.fbx",
+      "kind": "positional",
+      "required": true,
+      "meaning": "FBX file to write; parent folder must exist ('Could not write FBX file' otherwise)"
+     },
+     {
+      "name": "--project",
+      "kind": "option",
+      "required": false,
+      "meaning": "Apply an .fbproject's animation replacement before exporting"
+     }
+    ],
+    "output": "stdout: exported=<output path>. stderr: '<cmd> requires <game-root> <clip-asset> <output.fbx>', 'Select a ClipControllerAsset; ...', 'Animation clip asset was not found', 'Could not write FBX file', 'Animation is too long to bake for FBX export', 'FBX export failed: ...', 'Unknown/missing animation option: <arg>'.",
+    "writes": "The FBX at output.fbx (2,151,984 bytes for the push clip; 2,906,400 when exported via --project). Exported FBX re-reads as joints=401 takes=1 take=0 name=<clip path> duration=2.5 fps=60 tracks=75.",
+    "verified": "ran-successfully: on DA-PC to C:\\dev\\studio-plus-discovery\\media\\push_full_static.fbx and from_project.fbx; error runs for subtractive clip, bogus flag, and non-existent output folder.",
+    "example": "reskate_cli animation-export \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Skate\" animation/dingo/c_proto_onb_push_regular_medium_full_static C:\\dev\\studio-plus-discovery\\media\\push_full_static.fbx",
+    "exit_codes": "0 ok; 1 error",
+    "runtime": "about 3.4-3.6 s"
+   },
+   {
+    "name": "animation-import",
+    "purpose": "Replace a game animation clip with a take from an FBX and save the result as a Studio project (.fbproject) or a ready mod (.fbmod). Optionally layers onto an existing project.",
+    "signature": "reskate_cli animation-import <game-root> <clip-asset> <input.fbx> <output.fbproject|output.fbmod> [--take N] [--project <file.fbproject>]",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder (only read, nothing written there)"
+     },
+     {
+      "name": "clip-asset",
+      "kind": "positional",
+      "required": true,
+      "meaning": "ClipControllerAsset to replace"
+     },
+     {
+      "name": "input.fbx",
+      "kind": "positional",
+      "required": true,
+      "meaning": "FBX with an animation take whose bones match the game rig. A GLB with no takes fails with 'Select an FBX animation take'."
+     },
+     {
+      "name": "output",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Path ending in .fbproject or .fbmod (else 'Animation output must use .fbproject or .fbmod'). Missing parent folders are created. Existing file is overwritten."
+     },
+     {
+      "name": "--take",
+      "kind": "option",
+      "required": false,
+      "meaning": "Integer take index in the FBX, default 0. Out of range gives 'Select an FBX animation take'; flag without value gives 'Unknown/missing animation option: --take'."
+     },
+     {
+      "name": "--project",
+      "kind": "option",
+      "required": false,
+      "meaning": "Base .fbproject to start from; its resources are carried into the output (3 -> 17 resources with the scooter project). The base file itself is not modified (hash checked)."
+     }
+    ],
+    "output": "stdout: saved=<output path> then resources=<n> (3 for a plain import: the clip EBX plus reskatestudio/animations/<guid>/channels and .../keys). stderr: '<cmd> requires <game-root> <clip-asset> <input.fbx> <output.fbproject|output.fbmod>', 'Select an FBX animation take', 'Animation output must use .fbproject or .fbmod', 'Unknown/missing animation option: <arg>', 'Animation clip asset was not found', plus FBX errors such as 'FBX animation has an invalid quaternion', 'Animation node is missing or ambiguous: <name>', 'Vertex and morph animation cannot be mapped to skeletal clip channels', 'Could not open mesh file'.",
+    "writes": "Only the output file. .fbproject 510,541 bytes; .fbmod 199,669 bytes. The project/mod is titled 'Animation replacement', profile=Skate, head=625200; fbmod-info reports version=6 resources=8.",
+    "verified": "ran-successfully: on DA-PC with the round-trip FBX and the scooter anim\\push_regular_medium.fbx, to .fbproject, .fbmod, with --take 0, with --project (on a copy of Untitled.fbproject), into a new subfolder, overwriting an existing output; error runs with --take 5, bad extension, --foo, bare --take and a GLB input.",
+    "example": "reskate_cli animation-import \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Skate\" animation/dingo/c_proto_onb_push_regular_medium_full_static C:\\Users\\lokid\\Downloads\\reskate-scooter\\anim\\push_regular_medium.fbx C:\\dev\\studio-plus-discovery\\media\\imp_scooter.fbmod --take 0",
+    "exit_codes": "0 ok; 1 error",
+    "runtime": "about 3.9-4.2 s (failures about 2.8-3.3 s)",
+    "notes": "Does not deploy anything. Outputs are in C:\\dev\\studio-plus-discovery\\media\\ (imp_*.fbproject, imp_scooter.fbmod, newdir\\imp.fbproject)."
+   },
+   {
+    "name": "fbx-animation-info",
+    "purpose": "Read an FBX (or other Assimp-readable file) and list skeleton joint count and animation takes. No game root needed.",
+    "signature": "reskate_cli fbx-animation-info <file.fbx>",
+    "args": [
+     {
+      "name": "file.fbx",
+      "kind": "positional",
+      "required": true,
+      "meaning": "FBX file to inspect; a GLB is also accepted"
+     }
+    ],
+    "output": "stdout: joints=401, takes=1, then one line per take: 'take=0 name=animation/dingo/c_proto_onb_push_regular_medium_full_static duration=2.5 fps=60 tracks=75'. For the scooter GLB: joints=0 takes=0 (exit 0). stderr: 'Could not open mesh file' for missing/unreadable file. Called with no file it prints the generic usage plus the Animation commands block.",
+    "writes": "none",
+    "verified": "ran-successfully: on DA-PC with the scooter push_regular_medium.fbx, the exported FBXs, the scooter GLB and a nonexistent path.",
+    "example": "reskate_cli fbx-animation-info C:\\Users\\lokid\\Downloads\\reskate-scooter\\anim\\push_regular_medium.fbx",
+    "exit_codes": "0 ok (including a file with zero takes); 1 cannot open file; 2 no argument (usage)",
+    "runtime": "about 40 ms"
+   }
+  ],
+  "group_notes": "General: all result lines go to stdout as key=value; all errors go to stderr as a single line. Exit 2 plus generic usage when the arg count is too low for the dispatcher (command only, or no args); exit 1 for command-level errors. Game-root commands take about 2.8 s just to load the index. The hinted clip animation/dingo/subt_c_proto_onb_push_regular_medium_loop_02 is a subtractive controller and is rejected by all animation commands. A working clip is animation/dingo/c_proto_onb_push_regular_medium_full_static (the take name inside the scooter FBX). Asset discovery: find-type <game-root> NewWaveAsset | LocalizedWaveAsset | MovieTexture2Asset lists names and ends with matches=N (9 movies). audio, webm and video are probes only: none of them saves a WAV/WebM/frame, so a wrapper that wants playable files must do its own extraction (vgmstream for audio). Temp dirs used: %TEMP%\\ReSkateStudio\\{CliAudio,MediaWork,Cache}. Nothing was written to the game root, the old Studio folder (before/after listing identical) or the scooter folder. Outputs are in C:\\dev\\studio-plus-discovery\\media\\. Scripts are in /tmp/claude-1000/-home-pi5-nas-storage-projects-reskate/d583d1ac-0529-4b7b-9832-8cd5917cc033/scratchpad/disc-media/. Gotcha: in PowerShell, R is an alias for Invoke-History, so don't name a helper function R."
+ },
+ {
+  "group": "cosmetics",
+  "commands": [
+   {
+    "name": "cosmetics",
+    "purpose": "Loads the cosmetic catalog from the installed game and prints a small sample plus catalog counts and the default preview targets (board and character) that Studio uses for its cosmetic preview.",
+    "signature": "reskate_cli cosmetics <game-root>",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder containing Skate.exe (it SHA-256s Skate.exe first)",
+      "values": "path"
+     }
+    ],
+    "output": "stdout, plain text. First 10 catalog rows only, as '<slot> <item ebx path> <appearance name>' (e.g. 'board_bottomart items/cust_board/own_deckgraphic_baker_popsicle_00001 Deck_Baker_Graphic_00001_AP'), then key=value lines: cosmetics=2492, board-cosmetics=937, warnings=0, preview-mesh=, preview-texture=, preview-section=, character-preview-item=, character-preview-mesh=, character-preview-texture=, character-preview-section=, character-preview-roles=, character-preview-parameters=, character-preview-materials=, then 'character-material=<section>\\t<n>\\t<texture>\\tUDIM'. Strings also show a possible 'character-preview-error=' line. 24 lines total on build 25414733.",
+    "writes": "none (checked cwd and caches)",
+    "verified": "ran-successfully: cosmetics <game> -> exit 0, 24 lines, identical to scooter test\\cosmetics.txt. Extra args ('50', 'jeans', '--bogus') are silently ignored, output unchanged. Bad root -> 'could not open C:\\nope\\Skate.exe for SHA-256 (Windows 3)' exit 1. No args -> generic usage, exit 2.",
+    "runtime": "about 3 s",
+    "exit_codes": "0 ok; 1 error (bad game root); 2 usage when no args",
+    "notes": "Not a full catalog dump: only 10 sample rows are printed. For the full list use cosmetic-audit (one row per cosmetic). Saved outputs: C:\\dev\\studio-plus-discovery\\cosm\\cosmetics*.txt",
+    "example": "reskate_cli cosmetics \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Skate\""
+   },
+   {
+    "name": "cosmetic-audit",
+    "purpose": "Walks every cosmetic in the catalog, tries to resolve its preview geometry, material sections and textures, and reports per item OK/FAIL plus per-slot summaries. Effectively the full cosmetic catalog listing with previewability diagnostics.",
+    "signature": "reskate_cli cosmetic-audit <game-root>",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder",
+      "values": "path"
+     }
+    ],
+    "output": "stdout, tab-separated, one row per cosmetic (2492 rows): 'OK\\t<index>\\t<slot>\\t<item path>\\tsections=N\\tbound=N\\tmaterials=N\\tappearance-bound=N\\twarnings=N\\ttexture=<path>' (strings also show warning=, degraded=, unmatched= columns) or 'FAIL\\t<index>\\t<slot>\\t<item path>\\t<reason>' (e.g. 'cosmetic has no directly previewable geometry path'). Then 'SUMMARY\\tcosmetics=2492\\tloaded=2316\\tfailed=176\\tuncovered=0\\tunmatched=47\\tdegraded=537', then FAILURES_BY_SLOT / UNCOVERED_BY_SLOT / UNMATCHED_BY_SLOT / DEGRADED_BY_SLOT '\\t<slot>\\t<count>' lines. 2520 lines, about 690 KB.",
+    "writes": "none",
+    "verified": "ran-successfully: cosmetic-audit <game> -> exit 0 in 63 s, 2520 lines (OK 2316, FAIL 176). Extra arg '5' ignored (same 2520 lines, 60 s). Bad root -> SHA-256 error exit 1. No args -> usage, LASTEXITCODE -1.",
+    "runtime": "about 60-65 s",
+    "exit_codes": "0 ok (even with FAIL rows); 1 bad game root; -1 (0xFFFFFFFF) observed with no args",
+    "notes": "Best source for the complete cosmetic list with slot names (cust_bodies, cust_tops, cust_fullBodyCostume, cust_scalpHair, cust_tattoo, type_boardsticker, board_bottomart, ...). Full output saved at C:\\dev\\studio-plus-discovery\\cosm\\caudit.txt",
+    "example": "reskate_cli cosmetic-audit \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Skate\""
+   },
+   {
+    "name": "cosmetic-mesh-import",
+    "purpose": "Creates a new cosmetic item cloned from a donor cosmetic, replacing its geometry with an imported GLB/FBX mesh (skinned to the donor skeleton), and writes the result as an FBProject or FBMOD. Also writes a readback GLB of what was encoded.",
+    "signature": "reskate_cli cosmetic-mesh-import <game-root> <donor-item-asset> <model.glb|fbx> <output.fbproject|output.fbmod>",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder",
+      "values": "path"
+     },
+     {
+      "name": "donor-item-asset",
+      "kind": "positional",
+      "required": true,
+      "meaning": "EBX item path of a cosmetic in the catalog, lower case, e.g. items/cust_fullbodycostume/own_costume_gen_isaacclarke_00001",
+      "values": "item path from cosmetic-audit"
+     },
+     {
+      "name": "model",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Mesh to import",
+      "values": ".glb or .fbx only (.obj -> 'Select an FBX or GLB mesh')"
+     },
+     {
+      "name": "output",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Output file. .fbmod gives a binary FBMOD; any other extension (even .zip) is written as an FBProject",
+      "values": "path"
+     }
+    ],
+    "output": "stdout: 'readback=<output stem>.readback.glb bones=<n>', then for each authored EBX 'ebx <name> (<Type>) file=<guid> bundle=<bundle>' with indented '  import <guid> -> <asset>' lines, '  path type=<n> name=<name>' lines for the item AssetPaths, 'chunk <guid> bytes=<n>' lines (8 chunks for a full-body costume), 'lookup <dmpreset> -> <bundlereftable>', then 'item=items/<slot>/own_<model file stem>' and 'output=<path>'. About 108 lines for the Isaac donor.",
+    "writes": "<output> (FBProject ~8.9 MB or FBMOD ~3.1 MB for the Isaac donor) and <output dir>\\<output stem>.readback.glb (~3.3 MB). New item name derived from model filename: items/<slot>/own_<stem>, appearance presets <stem>_ap, <stem>_role21_ap ... under characters/customization/reskate/.",
+    "verified": "ran-successfully: Isaac Clarke donor + scooter razor_scooter_deck.glb -> exit 0, 14 s, .fbproject and .fbmod both produced in C:\\dev\\studio-plus-discovery\\cosm; Razor_Scooter.fbx also worked. Errors seen: deck donor items/cust_board/own_deckgraphic_baker_popsicle_00001 -> 'This cosmetic has no item-specific geometry slot; its shared mesh was not changed' (exit 1); jeansdemon bottoms and Sumo costume -> 'Cannot route FBX mesh Razor_Scooter-1 to a native material section' (exit 1); unknown donor -> 'donor item is not in the cosmetic catalog' (exit 1); .obj -> 'Select an FBX or GLB mesh'. No args -> usage, -1.",
+    "runtime": "about 3 s to fail, about 14 s on success",
+    "exit_codes": "0 ok; 1 any error; -1 with no args",
+    "notes": "No flags found in strings for this command (no name, --deploy or --project option). Mesh material/section names must map to donor material sections or import fails. Board deck donors do not work since decks share one mesh. Related hidden commands in strings: cosmetic-thumbnail-test <game-root> <donor-item-asset> <image> <out-prefix>; cosmetic-create-probe, cosmetic-texture-probe <image>, cosmetic-effect-probe, cosmetic-material-probe <game-root>, costume-registry-probe <game-root>, texture-clone-test <game-root> <texture-ebx> <image> [slice] [out.dds].",
+    "example": "reskate_cli cosmetic-mesh-import \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Skate\" items/cust_fullbodycostume/own_costume_gen_isaacclarke_00001 C:\\Users\\lokid\\Downloads\\reskate-scooter\\out\\razor_scooter_deck.glb C:\\dev\\studio-plus-discovery\\cosm\\cmi_try3.fbproject"
+   },
+   {
+    "name": "native-costume-info",
+    "purpose": "Validates and describes the native costume group inside a binary FBMOD (one produced by native-costume-build) against the installed game.",
+    "signature": "reskate_cli native-costume-info <game-root> <file.fbmod>",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder",
+      "values": "path"
+     },
+     {
+      "name": "fbmod",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Binary FBMOD containing a native costume group (recipe witness)",
+      "values": ".fbmod (an .fbproject gives 'file is not a binary FBMOD')"
+     }
+    ],
+    "output": "From strings only (success not observed): key=value lines preset=, mesh-rid=, textures=, geometry-chunks=, morph-chunks=, marked-resources=. Validation errors begin 'invalid native costume group: ' followed by detail such as 'exactly one recipe witness is required per FBMOD', 'EBX partition differs from recipe: ...'.",
+    "writes": "none",
+    "verified": "ran-error-only: with only <game-root> -> 'native-costume-info requires a game root and FBMOD' exit 1; with Untitled.fbproject -> 'file is not a binary FBMOD' exit 1; with an FBMOD made by cosmetic-mesh-import -> 'FBMOD contains no native costume group' exit 1. No FBMOD with a native costume group exists on DA-PC, so success output is from strings.",
+    "runtime": "about 3 s",
+    "exit_codes": "1 on every error; 2 with no args",
+    "notes": "cosmetic-mesh-import FBMODs are not native costume groups; only native-costume-build output carries the ReSkate.NativeCostume.v1 recipe witness."
+   },
+   {
+    "name": "native-costume-donors",
+    "purpose": "Checks/measures the stock donor assets that native costume building relies on (the pinned Isaac Clarke full-body costume set) and prints counts.",
+    "signature": "reskate_cli native-costume-donors <game-root>",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder",
+      "values": "path"
+     }
+    ],
+    "output": "stdout: 'partitions=5', 'instances=74', 'bytes=41442' on build 25414733.",
+    "writes": "none",
+    "verified": "ran-successfully: exit 0, 3 lines. Extra arg ignored. Bad root -> SHA-256 error exit 1. No args -> usage exit 2.",
+    "runtime": "about 3 s",
+    "exit_codes": "0 ok; 1 bad root; 2 usage",
+    "notes": "Useful as a quick health check that the game build still matches the donors native-costume-build needs."
+   },
+   {
+    "name": "native-costume-build",
+    "purpose": "Builds a native full-body costume (cloned from the Isaac Clarke donor) from a prepared package directory into an FBProject or FBMOD.",
+    "signature": "reskate_cli native-costume-build <game-root> <package-directory> <output.fbproject|output.fbmod>",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder",
+      "values": "path"
+     },
+     {
+      "name": "package-directory",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Folder holding recipe.json, mesh.res, chunks\\<GUID>.chunk (exactly 8), and private textures as <category>\\texture.ebx/.res/.resmeta/.chunk",
+      "values": "directory"
+     },
+     {
+      "name": "output",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Output file",
+      "values": ".fbproject or .fbmod (else 'native costume output must use .fbproject or .fbmod')"
+     }
+    ],
+    "output": "From strings: progress text 'reading recipe', 'reading geometry and morph chunks', 'reading private textures', 'native costume package loaded', then key=value such as package-bytes=, output=. Errors prefixed 'native costume package: ', 'invalid native costume recipe: ', 'native costume build failed: '.",
+    "writes": "the output file only (not observed)",
+    "verified": "ran-error-only: missing dir -> 'native costume package: select a package directory'; empty dir -> 'native costume package: invalid or missing file <dir>\\recipe.json' (checked before output extension); recipe.json '{}' -> 'invalid native costume recipe: recipe is missing Assets'; non-JSON -> 'invalid JSON literal at JSON byte 0'. All exit 1, about 2.7 s. No valid package exists to test success.",
+    "runtime": "about 3 s to fail",
+    "exit_codes": "1 on error; 2 with no args",
+    "notes": "recipe.json schema from strings: {\"Assets\":[{\"Role\",\"Name\",\"Partition\"(GUID),\"ExportedGuids\":{}}] (exactly five roles), \"TextureNames\":{}, \"MaterialKeys\":{} (fourteen keys, hex uint64), \"MorphChunks\":[2 GUIDs], \"MeshResourceId\", \"DiagnosticMode\" (e.g. stock-isaac-control-v1, custom-geometry-stock-materials-v1, custom-geometry-private-materials-*-v1), \"SectionTextures\":[7 entries, portable mode only], \"GameplayEffects\":[]}. Item name must be Items/cust_fullBodyCostume/Own_..., preset must end _dmPreset, mesh name lowercase. No --deploy flag in its usage string. Package is presumably produced by Studio GUI or Blender scripts; not by any CLI command found."
+   },
+   {
+    "name": "textures",
+    "purpose": "Decode self-test for texture resources: decodes the first N texture resources from the game and reports size and format.",
+    "signature": "reskate_cli textures <game-root> [count]",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder",
+      "values": "path"
+     },
+     {
+      "name": "count",
+      "kind": "positional",
+      "required": false,
+      "meaning": "Number of textures to decode",
+      "values": "unsigned integer, default 100; non-numeric -> 'invalid stoull argument' exit 1; too large -> 'not enough texture resources to complete validation' exit 1"
+     }
+    ],
+    "output": "stdout: up to 10 lines '<texture path> = <W>x<H> <DXGI format> (<bytes> bytes)' (e.g. BC1_UNORM, BC7_SRGB) then 'decoded-textures=<count>'.",
+    "writes": "none",
+    "verified": "ran-successfully: default -> 11 lines decoded-textures=100, 3 s; count 5 -> decoded-textures=5; 'abc' -> invalid stoull exit 1; 999999 -> 11 s then 'not enough texture resources...' exit 1.",
+    "runtime": "about 3 s default; longer for big counts",
+    "exit_codes": "0 ok; 1 error; 2 no args",
+    "notes": "Not a texture lister or exporter. Export is in hidden commands texture-png / texture-dds (strings: 'texture export requires a resource name and output path'); also texture-clone-bench <game-root> <texture asset> <count>."
+   },
+   {
+    "name": "meshes",
+    "purpose": "Decode self-test for MeshSet resources: decodes the first N meshes, resolves their materials and reports counts and material warnings.",
+    "signature": "reskate_cli meshes <game-root> [count]",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder",
+      "values": "path"
+     },
+     {
+      "name": "count",
+      "kind": "positional",
+      "required": false,
+      "meaning": "Number of meshes to decode",
+      "values": "unsigned integer, default 25; non-numeric -> 'invalid stoull argument' exit 1"
+     }
+    ],
+    "output": "stdout: up to 10 lines '<mesh path> = Rigid LOD 0 (<v> vertices, <t> triangles)', then decoded-meshes=, resolved-materials=, udim-materials=, material-warnings=, and 'material-warning-reason=<n>\\t<reason>' lines (e.g. 'buildkit pattern paint requires UV1 baking').",
+    "writes": "none",
+    "verified": "ran-successfully: default -> decoded-meshes=25 exit 0 3 s; count 3 and 1 worked; 'deck' -> invalid stoull exit 1. No args -> usage, -1.",
+    "runtime": "about 3 s",
+    "exit_codes": "0 ok; 1 error; -1 no args",
+    "notes": "Not a mesh search. Related hidden commands: mesh-elements <game-root> <name-substring> [limit], mesh-bounds <game-root> <substring> [--patch], mesh-sections-selftest, simplify-check (--ratios, --distances, --error-per-metre)."
+   },
+   {
+    "name": "mesh-author",
+    "purpose": "Self-test of the mesh authoring encoder: takes a fixed donor buildkit mesh, authors a tiny test MeshSet (6 vertices, 2 triangles) in memory and decodes it back.",
+    "signature": "reskate_cli mesh-author <game-root>",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder",
+      "values": "path"
+     }
+    ],
+    "output": "stdout: 'donor=world/buildkit/common/bowl/cmn_prp_own_bk_bowl_bowlfloormediumtolargecornerout/..._mesh', resource-bytes=1456, chunk-bytes=108, decoded-vertices=6, decoded-triangles=2.",
+    "writes": "none (checked cwd and temp)",
+    "verified": "ran-successfully: exit 0, 5 lines, 3 s; extra args 'foo --bar' ignored. No args -> usage, -1.",
+    "runtime": "about 3 s",
+    "exit_codes": "0 ok; 1 bad root; -1 no args",
+    "notes": "Diagnostic only, no user input mesh."
+   },
+   {
+    "name": "tangents",
+    "purpose": "Samples tangent frames from game mesh data to check the tangent encoding (statistics only).",
+    "signature": "reskate_cli tangents <game-root> [samples]",
+    "args": [
+     {
+      "name": "game-root",
+      "kind": "positional",
+      "required": true,
+      "meaning": "Skate install folder",
+      "values": "path"
+     },
+     {
+      "name": "samples",
+      "kind": "positional",
+      "required": false,
+      "meaning": "Number of samples",
+      "values": "unsigned integer, default 20000; 0 -> 'no usable tangent frames were sampled' exit 1; non-numeric -> 'invalid stoull argument' exit 1; further args ignored"
+     }
+    ],
+    "output": "stdout: samples=<n>, frames=<usable frames, varies run to run e.g. 4642 / 5984>, up-face=2.",
+    "writes": "none",
+    "verified": "ran-successfully: default exit 0 3 s; '5 --bogus' -> samples=5 frames=2; '0' and 'abc' errors as listed. No args -> usage, -1.",
+    "runtime": "about 3 s",
+    "exit_codes": "0 ok; 1 error; -1 no args",
+    "notes": "Sampling appears random (frames differ between identical runs). Related hidden commands: tangent-roundtrip <game-root> (prints equivalent=, exact=), tangent-samples <game-root> <count> <out.csv> (CSV header b0,b1,b2,b3,nx,ny,nz,tx,ty,tz,sign)."
+   }
+  ],
+  "group_notes": "I mapped all 10 commands. I ran each one against the real game with outputs only in C:\\dev\\studio-plus-discovery\\cosm on DA-PC (full stdout of every run is saved there as <tag>.txt). Nothing was written to the game root, Mods, the old Studio folder or the scooter folder, and %LOCALAPPDATA% ReSkate caches were not touched by my runs.\n\nThree of the commands were not tested to success:\n- native-costume-info never succeeded, because no FBMOD with a native costume group exists.\n- native-costume-build never succeeded, because no valid package directory exists.\n- For both, the success output is taken from strings.\n\nGeneral behaviour:\n- Every command that takes a game root first SHA-256s <root>\\Skate.exe. A bad root gives 'could not open ...\\Skate.exe for SHA-256 (Windows 3)' and exit 1.\n- With no args every command prints the generic usage and the Animation commands help block.\n- The no-args exit code was 2 for cosmetics, native-costume-*, and textures. It was -1 (0xFFFFFFFF) for cosmetic-audit, cosmetic-mesh-import, meshes, mesh-author and tangents.\n- Numeric optional args are parsed with stoull. A bad value gives 'invalid stoull argument' and exit 1.\n- textures, meshes, mesh-author and tangents are decoder self-tests, not listers.\n- For the full cosmetic catalog use cosmetic-audit. The cosmetics command prints only 10 sample rows.\n\ncosmetic-mesh-import:\n- Known working donor: items/cust_fullbodycostume/own_costume_gen_isaacclarke_00001. Board deck donors fail.\n- Scripts in this folder: /tmp/claude-1000/-home-pi5-nas-storage-projects-reskate/d583d1ac-0529-4b7b-9832-8cd5917cc033/scratchpad/disc-cosm (run.sh, hdr.ps1 helper). Strings dumps are in the same folder: str.txt (CLI) and studio.txt (Studio).\n- PowerShell gotcha: do not name a helper function R, because R is the alias for Invoke-History."
+ }
+]
