@@ -25,7 +25,8 @@ bool starts_with_ci(std::string_view s, std::string_view prefix) {
 }
 
 EngineRun run_engine(Context& context, const std::vector<std::string>& args, LineHandler on_err_line, LineHandler on_out_line,
-                     const std::filesystem::path& working_dir) {
+                     const std::filesystem::path& working_dir,
+                     const std::vector<std::pair<std::wstring, std::wstring>>& extra_env) {
     ProcessOptions options;
     options.executable = context.settings.reskate_cli();
     if (!working_dir.empty()) {
@@ -40,6 +41,7 @@ EngineRun run_engine(Context& context, const std::vector<std::string>& args, Lin
     options.cancel = context.cancel;
     if (!context.settings.blender.empty())
         options.extra_env.emplace_back(L"RESKATE_BLENDER", context.settings.blender.native());
+    options.extra_env.insert(options.extra_env.end(), extra_env.begin(), extra_env.end());
     std::string held;
     bool holding = false;
     auto forward = [&](std::string_view line) {

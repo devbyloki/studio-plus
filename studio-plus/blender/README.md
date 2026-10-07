@@ -68,6 +68,10 @@ contract as JSON.
 
 ## Deploying them
 
+Studio+ itself runs `studio_map_import.py --inspect` from the `blender\` folder the build copies beside
+`studio-plus.exe` (`map inspect-scene`), so looking inside a scene works whatever converter the engine has.
+Building still goes through the engine's own copy:
+
 The engine looks for `Native\Blender\studio_map_import.py` next to `reskate_cli.exe`, and the
 scripts find each other through `__file__`, so copy the whole folder over `Native\Blender\` of
 the engine folder.

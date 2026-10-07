@@ -24,9 +24,11 @@ using LineHandler = std::function<void(Context&, std::string_view line)>;
 // the engine folder, so files it writes relative to its working directory stay out of the install.
 // With the default handler the last stderr line is held back and only shown as progress when the
 // run succeeded: on failure it becomes the error message instead of appearing twice.
+// `extra_env` is added to the engine's environment (it reaches the Blender converter it starts).
 EngineRun run_engine(Context& context, const std::vector<std::string>& args,
                      LineHandler on_err_line = nullptr, LineHandler on_out_line = nullptr,
-                     const std::filesystem::path& working_dir = {});
+                     const std::filesystem::path& working_dir = {},
+                     const std::vector<std::pair<std::wstring, std::wstring>>& extra_env = {});
 
 // Throws Error(code) with the most useful stderr line when exit_code != 0.
 void require_success(const EngineRun& run, const std::string& code = "engine_failed");

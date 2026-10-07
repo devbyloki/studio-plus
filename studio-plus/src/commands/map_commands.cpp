@@ -121,8 +121,9 @@ bool skate_running() {
 // Runs the engine and turns a failure into Error(code), or Error(not_found_code) when the
 // engine's message says something was not found.
 EngineRun run_checked(Context& c, const std::vector<std::string>& args, const std::string& code,
-                      const std::string& not_found_code = {}, LineHandler on_err = nullptr) {
-    EngineRun run = run_engine(c, args, std::move(on_err));
+                      const std::string& not_found_code = {}, LineHandler on_err = nullptr,
+                      const std::vector<std::pair<std::wstring, std::wstring>>& extra_env = {}) {
+    EngineRun run = run_engine(c, args, std::move(on_err), nullptr, {}, extra_env);
     try {
         require_success(run, code);
     } catch (Error& e) {
@@ -358,6 +359,65 @@ struct CompileProgress {
     }
 };
 
+// Studio+'s copy of the Blender map converter (blender\ beside studio-plus.exe, copied there by the build),
+// else the engine's own Native\Blender copy. --inspect needs converter 2.12.0 or newer.
+fs::path map_converter(const Context& c) {
+    std::error_code ec;
+    for (const fs::path& script : {executable_dir() / L"blender" / L"studio_map_import.py",
+                                   c.settings.resolved_engine_dir() / L"Native" / L"Blender" / L"studio_map_import.py"})
+        if (fs::is_regular_file(script, ec)) return script;
+    throw Error("converter_missing", "studio_map_import.py was not found in the blender folder beside studio-plus.exe or in "
+                "the engine's Native\\Blender folder. Reinstall Studio+ with its blender folder.");
+}
+
+// `scene` opened by the converter in Blender with --inspect: what a map build would make of it, without writing anything.
+Json inspect_scene(Context& c, const fs::path& scene, fs::path blender, double scale) {
+    std::error_code ec;
+    if (blender.empty()) blender = c.settings.blender;
+    if (blender.empty()) blender = detect_blender();
+    if (blender.empty() || !fs::is_regular_file(blender, ec))
+        throw Error("blender_missing", "Looking inside a scene needs Blender. Set it with: studio-plus studio set blender <blender.exe>");
+    const fs::path script = map_converter(c);
+    ProcessOptions po;
+    po.executable = blender;
+    po.args = {"--background", "--factory-startup", "--python", path_utf8(script), "--", "--input", path_utf8(scene), "--inspect"};
+    if (scale != 1.0) { po.args.push_back("--scale"); po.args.push_back(std::to_string(scale)); }
+    po.working_dir = Settings::data_dir();
+    po.cancel = c.cancel;
+    Json result;
+    std::string last_error_line;
+    po.on_stdout_line = [&](std::string_view line) {
+        if (line.starts_with("RESKATE_MAP_PROGRESS=")) {
+            const Json p = Json::parse(line.substr(21), nullptr, false);
+            if (p.is_object())
+                c.progress(p.value("progress", -1.0), p.contains("message") && p["message"].is_string() ? p["message"].get<std::string>() : "");
+        } else if (line.starts_with("RESKATE_MAP_RESULT=")) {
+            result = Json::parse(line.substr(19), nullptr, false);
+        }
+    };
+    po.on_stderr_line = [&](std::string_view line) {
+        if (!line.empty()) last_error_line.assign(line);
+    };
+    c.progress(0, "Opening " + path_utf8(scene.filename()) + " in Blender");
+    const ProcessResult r = run_process(po);
+    if (r.cancelled) throw Error("cancelled", "Cancelled");
+    if (!result.is_object()) {
+        if (last_error_line.find("unrecognized arguments") != std::string::npos)
+            throw Error("converter_too_old", "The map converter at " + path_utf8(script) + " has no --inspect (it needs 2.12.0 or newer)",
+                        {{"converter", path_utf8(script)}});
+        throw Error("inspect_failed", "Blender exited with code " + std::to_string(r.exit_code) + " without a result" +
+                    (last_error_line.empty() ? std::string() : ": " + last_error_line), {{"exit_code", r.exit_code}});
+    }
+    if (result.value("status", "") == "failed") {
+        const std::string code = result.contains("error_code") && result["error_code"].is_string() ? result["error_code"].get<std::string>() : "inspect_failed";
+        const std::string message = result.contains("error") && result["error"].is_string() ? result["error"].get<std::string>() : "The converter failed";
+        throw Error(code, message, {{"errors", result.value("errors", Json::array())}, {"converter", path_utf8(script)}});
+    }
+    result["converter"] = path_utf8(script);
+    result["blender"] = path_utf8(blender);
+    return result;
+}
+
 }  // namespace
 
 void register_map_commands(Registry& r) {
@@ -395,7 +455,9 @@ void register_map_commands(Registry& r) {
             {"deploy", ParamType::Boolean, "Install the result into <game>\\Mods (writes into the game folder)", false, false, {}, Json(false)},
             {"mod-folder", ParamType::String, "Mods subfolder name for deploy: 1-64 letters, digits, spaces, _ - or ., not starting with '.'. Ignored without deploy"},
             {"blender", ParamType::Path, "blender.exe for scene input. Defaults to the saved Blender setting, then auto-detection"},
-            {"pause-map", ParamType::Enum, "Pause-menu map render style made by the Blender converter (scene input only)", false, false, {"2d", "3d"}, Json("3d")},
+            {"pause-map", ParamType::Enum, "Pause-menu map picture made by the Blender converter (scene input only): 3d, 2d, or none "
+                                           "to skip the render (the slowest step; the map keeps San Van's pause map; needs converter 2.12)",
+             false, false, {"2d", "3d", "none"}, Json("3d")},
             {"time-of-day", ParamType::Enum, "Starting or fixed time of day. Omit for the engine default", false, false, k_times_of_day},
             {"stream", ParamType::Boolean, "--stream streams render meshes through WorldPartition cells, --no-stream keeps them resident. Omit for the engine default (resident for a tiny map)"},
             {"cell-size", ParamType::Integer, "Streaming cell size in metres: 200, 100 or 50"},
@@ -524,7 +586,11 @@ void register_map_commands(Registry& r) {
             if (deploy) args.push_back("--deploy");
             if (!mod_folder.empty()) { args.push_back("--mod-folder"); args.push_back(mod_folder); }
             if (!blender.empty()) { args.push_back("--blender"); args.push_back(path_utf8(absolute_path(blender))); }
-            if (scene_input) add_option(args, a, "pause-map", "--pause-map");
+            // The converter skips the pause-map render when RESKATE_MAP_NO_PAUSE_MAP is set; the engine passes its
+            // environment on to Blender. Converter 2.11.2 (the stock ReSkate Studio zip) ignores it.
+            std::vector<std::pair<std::wstring, std::wstring>> engine_env;
+            if (scene_input && a.value("pause-map", std::string("3d")) == "none") engine_env.emplace_back(L"RESKATE_MAP_NO_PAUSE_MAP", L"1");
+            else if (scene_input) add_option(args, a, "pause-map", "--pause-map");
             add_option(args, a, "time-of-day", "--time-of-day");
             if (a.contains("stream")) args.push_back(a["stream"].get<bool>() ? "--stream" : "--no-stream");
             add_option(args, a, "cell-size", "--cell-size");
@@ -555,7 +621,7 @@ void register_map_commands(Registry& r) {
             progress.scene_input = scene_input;
             c.progress(0, scene_input ? "Exporting the scene with Blender" : "Reading the normalized map");
             EngineRun run = run_checked(c, args, "compile_failed", {},
-                                        [&](Context& ctx, std::string_view line) { progress.line(ctx, line); });
+                                        [&](Context& ctx, std::string_view line) { progress.line(ctx, line); }, engine_env);
 
             Json kv = kv_object(run.out_lines);
             Json files = Json::object();
@@ -600,6 +666,41 @@ void register_map_commands(Registry& r) {
             result["warnings"] = progress.warnings;
             result["seconds"] = std::round(run.seconds * 10) / 10;
             return result;
+        },
+    });
+
+    // ---------------------------------------------------------------- map inspect-scene
+    r.add({
+        .group = "map", .name = "inspect-scene",
+        .summary = "Look inside a .blend or .fbx scene before building it (objects, collision, spawn)",
+        .description =
+            "Opens a .blend or .fbx scene in Blender with the map converter's --inspect mode and reports what map "
+            "compile would make of it, without writing anything: objects with their placement and collision mode, "
+            "triangles and materials, materials with their collision surface and base colour, spawn and travel "
+            "points, light, audio, NPC route, prefab, reflection probe and grind curve counts, collision and "
+            "placement totals, bounds in game space, how the pause map would be made, and every warning and error "
+            "(e.g. missing_spawn_marker, no_geometry). The map name is what map compile will call the level.\n\n"
+            "Uses Studio+'s own converter (blender\\ beside studio-plus.exe, 2.12.0), else the engine's. Needs Blender "
+            "(the saved setting, or --blender). Read only. Takes a few seconds for a small scene.",
+        .params = {
+            {"scene", ParamType::Path, "A .blend or .fbx scene", true, true},
+            {"blender", ParamType::Path, "blender.exe. Defaults to the saved Blender setting, then auto-detection"},
+            {"scale", ParamType::Number, "World scale the scene will be built at", false, false, {}, Json(1.0), 0.0001},
+        },
+        .examples = {"map inspect-scene C:\\maps\\discmap.blend", "map inspect-scene park.fbx --json"},
+        .long_running = true,
+        .run = [](Context& c, const Json& a) -> Json {
+            std::error_code ec;
+            const fs::path scene = absolute_path(a["scene"].get<std::string>());
+            if (!fs::is_regular_file(scene, ec))
+                throw Error("scene_not_found", "Scene not found: " + path_utf8(scene), {{"param", "scene"}, {"path", path_utf8(scene)}});
+            const std::string ext = lower(path_utf8(scene.extension()));
+            if (ext != ".blend" && ext != ".fbx")
+                bad_arg("scene", "must be a .blend or .fbx file (a normalized map folder is checked by: studio-plus map inspect)");
+            const std::string blender = arg_string(a, "blender");
+            if (!blender.empty() && !fs::is_regular_file(absolute_path(blender), ec))
+                throw Error("blender_not_found", "blender.exe not found: " + blender, {{"path", blender}});
+            return inspect_scene(c, scene, blender.empty() ? fs::path() : absolute_path(blender), a.value("scale", 1.0));
         },
     });
 

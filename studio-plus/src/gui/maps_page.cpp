@@ -8,6 +8,7 @@
 #include "gui/app.h"
 #include "gui/jobs.h"
 #include "gui/look.h"
+#include "gui/runner.h"
 #include "gui/widgets.h"
 
 #include <shellapi.h>
@@ -137,6 +138,7 @@ struct MapsState {
     Json options = Json::object();  // map compile options that differ from the engine's defaults
 
     std::shared_ptr<Job> inspect, build, install, mods;
+    std::shared_ptr<Job> scene_look;  // map inspect-scene of a .blend / .fbx
     std::string build_source;       // what `build` was started for
     bool build_handled = true, install_handled = true, inspect_handled = true, deploys = false;
     std::vector<LogLine> log;
@@ -380,8 +382,10 @@ const std::vector<Group>& right_groups() {
           {"lod-distances", "Switch distances (m)", "Where each level takes over, for example 40,120. As many as the ratios.", Control::text, {}},
           {"lod-min-triangles", "Smallest mesh (triangles)", "Meshes with fewer triangles keep one level.", Control::number, {}}}},
         {"PAUSE MAP", "The overhead picture in the pause menu, rendered by Blender. A scene with assets\\<name>\\map.png next to it uses that picture instead.",
-         {{"pause-map", "Picture", "3D adds shadows and edge shading; 2D is flat and quicker.", Control::choice,
-           {{"3D with shadows", "3d"}, {"2D flat", "2d"}}}},
+         {{"pause-map", "Picture",
+           "3D adds shadows and edge shading; 2D is flat and quicker. None skips the render, the slowest step, and keeps "
+           "San Van's picture (needs the 2.12 converter in the engine folder; older ones render 3D).", Control::choice,
+           {{"3D with shadows", "3d"}, {"2D flat", "2d"}, {"None", "none"}}}},
          {}},
     };
     return groups;
@@ -798,6 +802,101 @@ const char* kind_label(Kind kind) {
     }
 }
 
+void start_scene_look() {
+    const Command* look = command("map", "inspect-scene");
+    if (!look || job_running(g_maps.scene_look)) return;
+    g_maps.scene_look = g_jobs.start(*look, Json{{"scene", g_maps.source}});
+}
+
+// What map inspect-scene found in a .blend / .fbx: counts, problems, then the objects and materials.
+void scene_look_view() {
+    auto& s = g_maps;
+    const bool for_this = s.scene_look && same_path(s.scene_look->args.value("scene", ""), s.source);
+    if (for_this && job_running(s.scene_look)) {
+        draw_job(*s.scene_look, false);
+        return;
+    }
+    if (ImGui::Button(for_this ? "LOOK AGAIN" : "LOOK INSIDE", ImVec2(S(150), 0))) start_scene_look();
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("Opens it in Blender and lists what a build would make of it. Writes nothing.");
+    if (!for_this || !s.scene_look->done.load()) return;
+    const Json outcome = outcome_of(s.scene_look);
+    if (!outcome.value("ok", false)) {
+        draw_job(*s.scene_look, true);
+        return;
+    }
+    const Json& r = outcome["result"];
+    const Json sum = r.value("summary", Json::object());
+    const Json audio = sum.value("audio", Json());
+    ImGui::Spacing();
+    stat_grid({{"OBJECTS", sum.value("mesh_instances", Json())}, {"TRIANGLES", sum.value("triangles", Json())},
+               {"MATERIALS", sum.value("materials", Json())}, {"SPAWN POINTS", sum.value("spawn_points", Json())},
+               {"LIGHTS", sum.value("lights", Json())}, {"GRIND CURVES", sum.value("grind_curves", Json())},
+               {"NPC ROUTES", sum.value("npc_routes", Json())}, {"REFLECTION PROBES", sum.value("reflection_probes", Json())},
+               {"AUDIO EMITTERS", audio.is_object() ? audio.value("emitters", Json()) : Json()},
+               {"TRAVEL POINTS", sum.value("travel_points", Json())}});
+    field("LEVEL NAME", r.value("map_name", ""));
+    if (const Json b = r.value("bounds", Json()); b.is_object() && b.contains("size") && b["size"].is_array() && b["size"].size() == 3) {
+        char size[96];
+        std::snprintf(size, sizeof size, "%.1f x %.1f x %.1f m (width x height x depth)", b["size"][0].get<double>(),
+                      b["size"][1].get<double>(), b["size"][2].get<double>());
+        field("SIZE", size);
+    }
+    const std::string pause = r.value("pause_map", "");
+    field("PAUSE MAP", pause == "authored" ? "Your own map.png" : pause == "skipped" ? "Skipped" :
+                       pause == "rendered_2d" ? "Rendered by Blender, 2D" : "Rendered by Blender, 3D");
+    std::string modes;
+    for (const auto& [mode, count] : sum.value("collision_modes", Json::object()).items())
+        modes += (modes.empty() ? "" : ", ") + std::to_string(count.is_number() ? count.get<long long>() : 0) + " " + mode;
+    if (!modes.empty()) field("COLLISION", modes);
+    for (const auto& e : r.value("errors", Json::array()))
+        wrapped_colour(e.value("message", e.value("code", std::string())), color::danger);
+    for (const auto& w : r.value("warnings", Json::array()))
+        wrapped_colour(w.value("message", w.value("code", std::string())), color::warning);
+    const Json objects = r.value("objects", Json::array());
+    if (!objects.empty() && ImGui::CollapsingHeader(("Objects (" + std::to_string(objects.size()) +
+                                                     (r.value("objects_truncated", false) ? "+" : "") + ")###scene_objects").c_str())) {
+        if (ImGui::BeginTable("##scene_objects", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("Object", ImGuiTableColumnFlags_WidthStretch, 3);
+            ImGui::TableSetupColumn("Collision", ImGuiTableColumnFlags_WidthStretch, 1);
+            ImGui::TableSetupColumn("Triangles", ImGuiTableColumnFlags_WidthStretch, 1);
+            ImGui::TableSetupColumn("Materials", ImGuiTableColumnFlags_WidthStretch, 3);
+            ImGui::TableHeadersRow();
+            for (const auto& o : objects) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(o.value("name", "").c_str());
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(o.value("collision_mode", "").c_str());
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(number_text(o.value("triangles", Json())).c_str());
+                std::string mats;
+                for (const auto& m : o.value("materials", Json::array())) mats += (mats.empty() ? "" : ", ") + text_of(m);
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(mats.c_str());
+            }
+            ImGui::EndTable();
+        }
+    }
+    const Json materials = r.value("materials", Json::array());
+    if (!materials.empty() && ImGui::CollapsingHeader(("Materials (" + std::to_string(materials.size()) + ")###scene_materials").c_str())) {
+        if (ImGui::BeginTable("##scene_materials", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("Material", ImGuiTableColumnFlags_WidthStretch, 3);
+            ImGui::TableSetupColumn("Surface", ImGuiTableColumnFlags_WidthStretch, 2);
+            ImGui::TableSetupColumn("Colour", ImGuiTableColumnFlags_WidthStretch, 1);
+            ImGui::TableSetupColumn("Objects", ImGuiTableColumnFlags_WidthStretch, 1);
+            ImGui::TableHeadersRow();
+            for (const auto& m : materials) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted((m.value("name", "") + (m.value("invisible", false) ? "  (invisible)" : "")).c_str());
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(text_of(m.value("surface", Json(""))).c_str());
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(text_of(m.value("base_color", Json(""))).c_str());
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(number_text(m.value("objects", Json())).c_str());
+            }
+            ImGui::EndTable();
+        }
+    }
+    caption(("SAME AS  " + s.scene_look->cli).c_str());
+}
+
 void scene_tile(App& app) {
     auto& s = g_maps;
     begin_tile("##maps_scene", 31);
@@ -868,9 +967,7 @@ void preview_tile() {
         const fs::path path(utf8_to_wide(s.source));
         const auto bytes = fs::file_size(path, ec);
         if (!ec) field("FILE", path_utf8(path.filename()) + "   " + std::to_string((bytes + 1023) / 1024) + " KB");
-        wrapped_muted("Studio+ cannot look inside a scene before it is built yet: the converter can list its objects, "
-                      "materials, collision and spawn (studio_map_import.py --inspect), but no studio-plus command runs "
-                      "that yet. BUILD shows what the map came out with.");
+        scene_look_view();
         // The last build of this scene, if it is still on screen.
         const Json outcome = s.build && same_path(s.build_source, s.source) ? outcome_of(s.build) : Json();
         if (outcome.is_object() && outcome.value("ok", false)) {
@@ -1299,6 +1396,7 @@ void recent_tile() {
         wrapped_muted("Maps you build show up here. Click one to load it again with its options.");
     } else {
         const float width = ImGui::GetContentRegionAvail().x;
+        int forget = -1;
         for (size_t i = 0; i < s.recent.size(); ++i) {
             const auto& r = s.recent[i];
             ImGui::PushID(static_cast<int>(i));
@@ -1308,6 +1406,12 @@ void recent_tile() {
             ImGui::BeginDisabled(busy());
             const bool pressed = list_row("##recent", width, height, selected);
             ImGui::EndDisabled();
+            if (ImGui::BeginPopupContextItem("##recent_menu")) {
+                if (ImGui::MenuItem("Forget this map")) forget = static_cast<int>(i);
+                if (ImGui::MenuItem("Copy path")) ImGui::SetClipboardText(r.source.c_str());
+                ImGui::EndPopup();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to load it with its options; right-click to forget it");
             auto* draw = ImGui::GetWindowDrawList();
             const ImVec4 clip(at.x, at.y, at.x + width - S(120), at.y + height);
             const fs::path path(utf8_to_wide(r.source));
@@ -1330,6 +1434,10 @@ void recent_tile() {
                 source_changed();
             }
             ImGui::PopID();
+        }
+        if (forget >= 0) {
+            s.recent.erase(s.recent.begin() + forget);
+            save_recent();
         }
     }
     end_tile();
