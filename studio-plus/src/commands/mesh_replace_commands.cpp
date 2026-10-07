@@ -1,6 +1,6 @@
-// Native mesh commands that do not go through reskate_cli: mesh info, mesh export-raw, mesh replace and
-// cosmetic new-board. They read the game with the ReSkate readers in src/native and write ReSkate Studio
-// .fbproject / Frosty .fbmod files themselves. Registered from cosmetic_commands.cpp.
+// Native mesh commands that do not go through reskate_cli: mesh find, mesh info, mesh export-raw and mesh
+// replace. They read the game with the ReSkate readers in src/native and write ReSkate Studio .fbproject /
+// Frosty .fbmod files themselves. Registered from cosmetic_commands.cpp.
 #include "commands/commands.h"
 #include "core/engine.h"
 #include "core/settings.h"

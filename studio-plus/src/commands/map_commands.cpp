@@ -390,7 +390,8 @@ Json inspect_scene(Context& c, const fs::path& scene, fs::path blender, double s
         if (line.starts_with("RESKATE_MAP_PROGRESS=")) {
             const Json p = Json::parse(line.substr(21), nullptr, false);
             if (p.is_object())
-                c.progress(p.value("progress", -1.0), p.contains("message") && p["message"].is_string() ? p["message"].get<std::string>() : "");
+                c.progress(p.contains("progress") && p["progress"].is_number() ? p["progress"].get<double>() : -1.0,
+                           p.contains("message") && p["message"].is_string() ? p["message"].get<std::string>() : "");
         } else if (line.starts_with("RESKATE_MAP_RESULT=")) {
             result = Json::parse(line.substr(19), nullptr, false);
         }

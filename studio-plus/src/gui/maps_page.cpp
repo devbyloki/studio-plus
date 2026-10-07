@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <chrono>
 #include <ctime>
 #include <filesystem>
@@ -847,7 +848,8 @@ void scene_look_view() {
     field("PAUSE MAP", pause == "authored" ? "Your own map.png" : pause == "skipped" ? "Skipped" :
                        pause == "rendered_2d" ? "Rendered by Blender, 2D" : "Rendered by Blender, 3D");
     std::string modes;
-    for (const auto& [mode, count] : sum.value("collision_modes", Json::object()).items())
+    const Json collision_modes = sum.value("collision_modes", Json::object());  // named: items() only borrows it
+    for (const auto& [mode, count] : collision_modes.items())
         modes += (modes.empty() ? "" : ", ") + std::to_string(count.is_number() ? count.get<long long>() : 0) + " " + mode;
     if (!modes.empty()) field("COLLISION", modes);
     for (const auto& e : r.value("errors", Json::array()))

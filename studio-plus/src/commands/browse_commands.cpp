@@ -435,8 +435,8 @@ void register_browse_commands(Registry& r) {
                 project.info.description = "Edited with ReSkate Studio+.";
             }
             auto& list = project.resources;
-            const auto same = std::find_if(list.begin(), list.end(), [&](const native::ModResource& r) {
-                return r.kind == res.kind && r.name == res.name;
+            const auto same = std::find_if(list.begin(), list.end(), [&](const native::ModResource& held) {
+                return held.kind == res.kind && held.name == res.name;
             });
             out["replaced_earlier_edit"] = same != list.end();
             if (same != list.end()) *same = std::move(res);

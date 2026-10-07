@@ -977,7 +977,7 @@ void register_mod_commands(Registry& r) {
                     fs::create_directories(folder, ec);
                     const fs::path fbmod = folder / (std::to_wstring(converted.size() + 1) + L"-" + p.stem().native() + L".fbmod");
                     c.progress(-1, "Exporting " + path_utf8(p.filename()) + " as .fbmod");
-                    Json exported = export_project(c, a, p, fbmod);
+                    export_project(c, a, p, fbmod);
                     converted.push_back({{"project", path_utf8(p)}, {"fbmod", path_utf8(fbmod)}});
                     p = fbmod;
                 }

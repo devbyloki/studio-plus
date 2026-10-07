@@ -72,9 +72,11 @@ add_executable(studio-plus-cli src/cli/main.cpp)
 target_link_libraries(studio-plus-cli PRIVATE studio_core)
 target_link_options(studio-plus-cli PRIVATE /ENTRY:wmainCRTStartup)
 set_target_properties(studio-plus-cli PROPERTIES OUTPUT_NAME studio-plus)
-# The Blender map converter ships beside the executables (map inspect-scene runs it from there).
-add_custom_command(TARGET studio-plus-cli POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/blender $<TARGET_FILE_DIR:studio-plus-cli>/blender)
+# The Blender map converter ships beside the executables (map inspect-scene runs it from there). One step
+# for both, so two copies never write the same files at once.
+add_custom_target(studio-blender-scripts ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/blender $<TARGET_FILE_DIR:studio-plus-cli>/blender
+    COMMENT "Copying the Blender scripts beside the executables")
 
 # ---------------------------------------------------------------- the window: ReSkate Studio+.exe
 enable_language(RC)

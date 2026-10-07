@@ -433,7 +433,7 @@ void check_costume_package(const fs::path& dir) {
 }
 }  // namespace
 
-// mesh info / export-raw / replace and cosmetic new-board, in mesh_replace_commands.cpp.
+// mesh find / info / export-raw / replace, in mesh_replace_commands.cpp.
 void register_mesh_replace_commands(Registry& r);
 
 void register_cosmetic_commands(Registry& r) {

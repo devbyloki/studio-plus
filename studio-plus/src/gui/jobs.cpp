@@ -3,6 +3,7 @@
 #include "core/settings.h"
 
 #include <cstdio>
+#include <iterator>
 #include <thread>
 
 namespace studio::gui {
@@ -29,6 +30,11 @@ std::shared_ptr<Job> Jobs::start(const Command& command, Json args) {
     job->started_at = std::chrono::system_clock::now();
     job->started = std::chrono::steady_clock::now();
     jobs_.push_back(job);
+    // Activity keeps the last runs, not every one of a long session (results can be megabytes). A page that
+    // still shows a run holds its own reference, so only the Activity row goes.
+    constexpr std::size_t kept = 300;
+    for (auto it = jobs_.begin(); jobs_.size() > kept && it != jobs_.end();)
+        it = (*it)->done.load() ? jobs_.erase(it) : std::next(it);
     // Detached: the job keeps itself alive, and closing the window cancels and waits for it.
     std::thread([job] {
         Settings settings = Settings::load();
