@@ -1285,13 +1285,15 @@ void inspector(App& app, ImVec2 size) {
     // Title: the last part of the name, the rest under it.
     auto* draw = ImGui::GetWindowDrawList();
     if (!g.back.empty()) {
-        if (ImGui::Button("<", ImVec2(S(32), 0))) {
+        // The tooltip is set before the click is handled: popping the last entry leaves g.back empty.
+        const bool back = ImGui::Button("<", ImVec2(S(32), 0));
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Back to %s", g.back.back().name.c_str());
+        if (back) {
             const Pick to = g.back.back();
             g.back.pop_back();
             select(app, to.name, to.kind, false);
             g.scroll_to_pick = true;
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Back to %s", g.back.back().name.c_str());
         ImGui::SameLine();
     }
     ImGui::PushFont(g_fonts.heading);

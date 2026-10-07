@@ -1,0 +1,44 @@
+# Builds studio-plus.exe and "ReSkate Studio+.exe" with MSVC (/W4 /WX), the way a contributor does locally.
+name: Windows build
+
+on:
+  push:
+    branches: [master, "claude/**"]
+    paths: ["studio-plus/**", ".github/workflows/build.yml"]
+  pull_request:
+    paths: ["studio-plus/**", ".github/workflows/build.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  msvc:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: studio-plus
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Configure
+        run: cmake --preset release
+      - name: Build
+        run: cmake --build --preset release
+      - name: Smoke test the CLI
+        shell: pwsh
+        run: |
+          $env:RSSP_DATA_DIR = "$env:RUNNER_TEMP\rssp"
+          .\build\release\studio-plus.exe studio version --json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\build\release\studio-plus.exe commands --json | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: studio-plus-windows
+          path: |
+            studio-plus/build/release/studio-plus.exe
+            studio-plus/build/release/ReSkate Studio+.exe

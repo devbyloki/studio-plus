@@ -588,13 +588,12 @@ std::string installed_path() {
     const std::string level = level_of(map_name(s.source, s.kind));
     const Json listed = outcome_of(s.mods);
     if (!listed.value("ok", false)) return {};
+    // A map mod registers its level assets in reskate-levels.json; mod list gives them as strings.
     for (const auto& m : listed["result"].value("mods", Json::array())) {
         if (!m.is_object()) continue;
-        const Json build = m.value("build", Json::object());
-        bool match = build.is_object() && build.value("map", "") == level;
         for (const auto& l : m.value("levels", Json::array()))
-            if (l.is_object() && l.value("asset", "").find("/" + level + "/") != std::string::npos) match = true;
-        if (match) return m.value("path", "");
+            if (l.is_string() && l.get_ref<const std::string&>().find("/" + level + "/") != std::string::npos)
+                return m.value("path", "");
     }
     return {};
 }
@@ -1349,7 +1348,10 @@ void installed_tile(App& app) {
         } else {
             const Json& r = outcome["result"];
             const Json mods = r.value("mods", Json::array());
-            if (!r.value("exists", false)) wrapped_muted("No Mods folder in " + r.value("game_root", std::string("the Skate folder")) + " yet.");
+            if (!r.value("reskate_installed", true))
+                wrapped_colour("ReSkate is not installed in " + r.value("game_root", std::string("this folder")) + ", so no mod loads.",
+                    color::warning);
+            if (!r.value("present", false)) wrapped_muted("No Mods folder in " + r.value("game_root", std::string("the Skate folder")) + " yet.");
             else if (mods.empty()) wrapped_muted("The Mods folder is empty.");
             for (const auto& m : mods) {
                 const std::string name = m.value("name", "");
@@ -1358,9 +1360,10 @@ void installed_tile(App& app) {
                 std::string detail;
                 const Json levels = m.value("levels", Json());
                 if (levels.is_array())
-                    for (const auto& level : levels)
-                        detail += (detail.empty() ? "Map: " : ", ") + (level.is_object() ? level.value("displayName", level.value("asset", "")) : text_of(level));
-                if (detail.empty()) detail = m.value("managed_by_reskate", false) ? "Mod installed by ReSkate Studio" : "Not installed by ReSkate Studio";
+                    for (const auto& level : levels) detail += (detail.empty() ? "Map: " : ", ") + text_of(level);
+                if (detail.empty()) detail = m.value("studio_marker", false) ? "Built by ReSkate Studio" : "Not built by ReSkate Studio";
+                const std::string status = m.value("status", std::string());
+                if (!status.empty() && status != "loads") detail += "  (" + status + ")";
                 inline_caption(detail.c_str());
                 ImGui::PopID();
             }

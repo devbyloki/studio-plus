@@ -45,4 +45,13 @@ std::string lower(std::string text);
 // 12,345
 std::string thousands(long long value);
 
+// object[key] as a number, or `fallback` when it is missing, null or not a number. Engine-backed
+// commands report null for values the engine left out, and Json::value would throw on those.
+template <typename T>
+T number(const Json& object, const char* key, T fallback) {
+    if (!object.is_object()) return fallback;
+    const auto it = object.find(key);
+    return it != object.end() && it->is_number() ? it->template get<T>() : fallback;
+}
+
 } // namespace studio::gui::kit

@@ -109,7 +109,7 @@ void find_tile(App& app) {
         }
         ImGui::TextDisabled("%zu clips%s", names.size(),
                             hidden ? (", " + std::to_string(hidden) + " controllers hidden").c_str() : "");
-        if (r.value("count", 0) >= 500) {
+        if (kit::number(r, "count", 0) >= 500) {
             ImGui::SameLine();
             ImGui::TextDisabled("(first 500 matches: type more of the name)");
         }
@@ -152,10 +152,10 @@ void info_tile() {
     if (r.is_object()) {
         ImGui::Spacing();
         if (ImGui::BeginTable("##info", 4, ImGuiTableFlags_SizingStretchSame)) {
-            ImGui::TableNextColumn(); field("LENGTH", std::to_string(r.value("duration_seconds", 0.0)).substr(0, 4) + " s");
-            ImGui::TableNextColumn(); field("FRAME RATE", std::to_string(r.value("fps", 0)) + " fps");
-            ImGui::TableNextColumn(); field("CHANNELS", std::to_string(r.value("channel_count", 0)));
-            ImGui::TableNextColumn(); field("JOINTS", std::to_string(r.value("joints", 0)));
+            ImGui::TableNextColumn(); field("LENGTH", std::to_string(kit::number(r, "duration_seconds", 0.0)).substr(0, 4) + " s");
+            ImGui::TableNextColumn(); field("FRAME RATE", std::to_string(kit::number(r, "fps", 0)) + " fps");
+            ImGui::TableNextColumn(); field("CHANNELS", std::to_string(kit::number(r, "channel_count", 0)));
+            ImGui::TableNextColumn(); field("JOINTS", std::to_string(kit::number(r, "joints", 0)));
             ImGui::EndTable();
         }
         field("RIG", r.value("rig", ""));
@@ -205,7 +205,7 @@ void import_tile(App& app) {
     if (kit::running(s.takes) || (s.takes && !kit::succeeded(s.takes))) kit::status(s.takes, "Read");
     const Json t = kit::result(s.takes);
     if (t.is_object()) {
-        ImGui::TextDisabled("%d joints, %d takes", t.value("joints", 0), t.value("take_count", 0));
+        ImGui::TextDisabled("%d joints, %d takes", kit::number(t, "joints", 0), kit::number(t, "take_count", 0));
         const float width = ImGui::GetContentRegionAvail().x;
         int i = 0;
         for (const auto& take : t.value("takes", Json::array())) {
@@ -214,7 +214,7 @@ void import_tile(App& app) {
             if (list_row("##take", width, S(30), s.take == take.value("index", i))) s.take = take.value("index", i);
             char line[512];
             std::snprintf(line, sizeof(line), "Take %d   %s   %.2f s at %d fps, %d tracks", take.value("index", i),
-                          take.value("name", "").c_str(), take.value("duration_seconds", 0.0), take.value("fps", 0), take.value("tracks", 0));
+                          take.value("name", "").c_str(), kit::number(take, "duration_seconds", 0.0), kit::number(take, "fps", 0), kit::number(take, "tracks", 0));
             ImGui::GetWindowDrawList()->AddText(ImVec2(at.x + S(12), at.y + (S(30) - ImGui::GetTextLineHeight()) * 0.5f), color::text, line);
             ImGui::PopID();
             ++i;
@@ -240,7 +240,7 @@ void import_tile(App& app) {
     const Json r = kit::result(s.imported);
     if (r.is_object()) {
         field("SAVED", r.value("output", "") + "  (" + kit::thousands(r.value("bytes", 0LL)) + " bytes, " +
-                           std::to_string(r.value("resources", 0)) + " resources)");
+                           std::to_string(kit::number(r, "resources", 0)) + " resources)");
         const bool project = kit::lower(r.value("output", "")).ends_with(".fbproject");
         ImGui::BeginDisabled(!project || kit::running(s.verify));
         if (ImGui::Button("CHECK THE NEW CLIP"))
@@ -253,8 +253,8 @@ void import_tile(App& app) {
         kit::status(s.verify, "Read back");
         const Json v = kit::result(s.verify);
         if (v.is_object())
-            kit::muted("The project's clip: " + std::to_string(v.value("channel_count", 0)) + " channels, " +
-                       std::to_string(v.value("fps", 0)) + " fps, " + std::to_string(v.value("duration_seconds", 0.0)).substr(0, 4) + " s.");
+            kit::muted("The project's clip: " + std::to_string(kit::number(v, "channel_count", 0)) + " channels, " +
+                       std::to_string(kit::number(v, "fps", 0)) + " fps, " + std::to_string(kit::number(v, "duration_seconds", 0.0)).substr(0, 4) + " s.");
     }
     end_tile();
 }

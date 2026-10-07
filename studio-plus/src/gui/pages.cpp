@@ -1,5 +1,4 @@
-// The pages: Home, the areas still to come, Settings and All commands, plus the rail and the frame
-// they sit in.
+// The shell's own pages (Home, Settings and All commands), the rail, and the frame every page sits in.
 #include "gui/app.h"
 
 #include "gui/look.h"
@@ -12,6 +11,7 @@
 #include "gui/widgets.h"
 #include "version.h"
 
+#include <imgui_internal.h>
 #include <shellapi.h>
 
 #include <algorithm>
@@ -53,62 +53,18 @@ void wrapped_muted(const std::string& text) {
     ImGui::PopTextWrapPos();
 }
 
-// ---------------------------------------------------------------- the areas still to come
+// ---------------------------------------------------------------- rail pages
 
+// The pages in the left rail, in order, between HOME and SETTINGS.
 struct Area {
     Page page;
     const char* nav;
-    const char* blurb;
-    std::vector<const char*> coming;
-    std::vector<std::string> groups;   // registry groups whose commands belong here
-    const char* name_contains;         // or any command whose name has this in it
 };
 
-const std::vector<Area>& areas() {
-    static const std::vector<Area> list{
-        {Page::maps, "CUSTOM MAPS",
-         "Build a Blender scene into a Skate map and install it, in three steps.",
-         {"Drop or browse a .blend or .fbx scene, name the map, BUILD & INSTALL",
-          "Time of day, streaming, chunk size and load distance, detail levels, pause-map picture",
-          "Analysis summary and a build log with timestamps"},
-         {"map"}, nullptr},
-        {Page::cosmetics, "COSMETICS",
-         "Browse the installed cosmetics and make new ones from them.",
-         {"Search and sort installed cosmetics", "Textures, appearance, visibility and thumbnails",
-          "Custom meshes from FBX or GLB, native costume packages"},
-         {"cosmetic", "costume", "mesh", "texture"}, nullptr},
-        {Page::animations, "ANIMATIONS",
-         "Preview a native clip on its rig and swap it for your own.",
-         {"Clip info and preview", "Export a take to FBX", "Replace a clip from FBX, keeping loop, root motion and tags"},
-         {"anim"}, nullptr},
-        {Page::project, "PROJECT & MODS",
-         "Your project, the mods it builds with, and getting them into the game.",
-         {"Mod details: title, author, version, description", "Load order of .fbmod files and a conflict check",
-          "BUILD PATCH, DEPLOY, and UNDO LAST DEPLOY"},
-         {"mod"}, nullptr},
-        {Page::assets, "ASSETS",
-         "Find anything in the game's data and look inside it.",
-         {"Search by name or type, with a folder tree", "EBX properties, textures, meshes, audio and video",
-          "Export to PNG, DDS, FBX, GLB and WAV"},
-         {"asset", "media"}, nullptr},
-    };
-    return list;
-}
-
-std::vector<const Command*> area_commands(const Area& area) {
-    std::vector<const Command*> out;
-    for (const auto& c : Registry::instance().all()) {
-        const bool in_group = std::find(area.groups.begin(), area.groups.end(), c.group) != area.groups.end();
-        const bool by_name = area.name_contains && c.name.find(area.name_contains) != std::string::npos;
-        if (in_group || by_name) out.push_back(&c);
-    }
-    return out;
-}
-
-void open_command(App& app, const Command* command) {
-    app.runner.bind(command);
-    app.page = Page::commands;
-}
+constexpr Area areas[]{
+    {Page::maps, "CUSTOM MAPS"},   {Page::cosmetics, "COSMETICS"}, {Page::animations, "ANIMATIONS"},
+    {Page::project, "PROJECT & MODS"}, {Page::assets, "ASSETS"},
+};
 
 // A list row for a command: its id over its summary.
 bool command_row(const Command& c, float width, bool selected) {
@@ -126,42 +82,6 @@ bool command_row(const Command& c, float width, bool selected) {
         badge(draw, ImVec2(at.x + width - bw - S(10), at.y + S(7)), mark, color::warning, color::ink);
     }
     return pressed;
-}
-
-void area_page(App& app, const Area& area) {
-    heading(area.nav);
-    wrapped_muted(area.blurb);
-    ImGui::Spacing();
-    begin_tile("##coming", seed_of(area.nav));
-    ImGui::PushFont(g_fonts.heading);
-    ImGui::TextUnformatted("COMING IN THE NEXT SLICE");
-    ImGui::PopFont();
-    ImGui::TextDisabled("This page is part of the Studio+ shell. Its own screens arrive with the next slice:");
-    for (const char* line : area.coming) {
-        ImGui::Bullet();
-        ImGui::TextUnformatted(line);
-    }
-    end_tile();
-    ImGui::Spacing();
-
-    begin_tile("##available", seed_of(area.nav) + 1);
-    ImGui::PushFont(g_fonts.heading);
-    ImGui::TextUnformatted("AVAILABLE NOW");
-    ImGui::PopFont();
-    const auto commands = area_commands(area);
-    if (commands.empty()) {
-        wrapped_muted("No commands for this area are in the registry yet. Each one shows up here, in the CLI and as "
-                      "an MCP tool as soon as it is added.");
-    } else {
-        wrapped_muted("These commands already work. Open one to run it here, or copy its command line.");
-        const float width = ImGui::GetContentRegionAvail().x;
-        for (const auto* c : commands) {
-            ImGui::PushID(c);
-            if (command_row(*c, width, false)) open_command(app, c);
-            ImGui::PopID();
-        }
-    }
-    end_tile();
 }
 
 // ---------------------------------------------------------------- home
@@ -541,12 +461,8 @@ void rail(App& app, float width) {
     }
     if (nav_tile(width, "HOME", app.page == Page::home, home_count, home_accent,
             home_accent ? "Something Studio+ needs is missing" : "")) app.page = Page::home;
-    for (const auto& area : areas()) {
-        const auto count = area_commands(area).size();
-        if (nav_tile(width, area.nav, app.page == area.page, count ? std::to_string(count) : std::string(), false,
-                count ? std::to_string(count) + " commands available now" : "Coming in the next slice"))
-            app.page = area.page;
-    }
+    for (const auto& area : areas)
+        if (nav_tile(width, area.nav, app.page == area.page)) app.page = area.page;
     ImGui::Dummy(ImVec2(0, S(10)));
     if (nav_tile(width, "SETTINGS", app.page == Page::settings)) app.page = Page::settings;
     if (nav_tile(width, "ALL COMMANDS", app.page == Page::commands, std::to_string(registry.all().size())))
@@ -615,6 +531,31 @@ void init_app(App& app) {
     run_doctor(app);
 }
 
+namespace {
+
+std::string g_page_error;  // the last exception a page threw, shown until dismissed
+
+void recover_page(const ImGuiErrorRecoveryState& before, const char* what) {
+    ImGuiIO& io = ImGui::GetIO();
+    const bool assert_on = io.ConfigErrorRecoveryEnableAssert, tooltip_on = io.ConfigErrorRecoveryEnableTooltip;
+    io.ConfigErrorRecoveryEnableAssert = io.ConfigErrorRecoveryEnableTooltip = false;
+    ImGui::ErrorRecoveryTryToRecoverState(&before);
+    io.ConfigErrorRecoveryEnableAssert = assert_on;
+    io.ConfigErrorRecoveryEnableTooltip = tooltip_on;
+    g_page_error = what;
+}
+
+void page_error_banner() {
+    if (g_page_error.empty()) return;
+    ImGui::PushStyleColor(ImGuiCol_Text, color::danger);
+    ImGui::TextWrapped("This page hit an error and skipped part of a frame: %s", g_page_error.c_str());
+    ImGui::PopStyleColor();
+    if (ImGui::SmallButton("DISMISS")) g_page_error.clear();
+    ImGui::Spacing();
+}
+
+} // namespace
+
 void draw_frame(App& app) {
     const auto& io = ImGui::GetIO();
     const ImVec2 size = io.DisplaySize;
@@ -659,16 +600,24 @@ void draw_frame(App& app) {
     } else {
         ImGui::BeginChild("##content", ImVec2(content_width, content_height), 0);
         ImGui::PopStyleVar();
-        if (app.page == Page::home) home_page(app);
-        else if (app.page == Page::maps) maps_page(app);
-        else if (app.page == Page::settings) settings_page(app);
-        else if (app.page == Page::project) project_page(app);
-        else if (app.page == Page::assets) assets_page(app);
-        else if (app.page == Page::cosmetics) cosmetics_page(app);
-        else if (app.page == Page::animations) animations_page(app);
-        else
-            for (const auto& area : areas())
-                if (area.page == app.page) area_page(app, area);
+        page_error_banner();
+        // A page that throws (e.g. a result field it did not expect) must not take the window down:
+        // unwind ImGui's stacks back to here and show the error above the page instead.
+        ImGuiErrorRecoveryState before;
+        ImGui::ErrorRecoveryStoreState(&before);
+        try {
+            if (app.page == Page::home) home_page(app);
+            else if (app.page == Page::maps) maps_page(app);
+            else if (app.page == Page::settings) settings_page(app);
+            else if (app.page == Page::project) project_page(app);
+            else if (app.page == Page::assets) assets_page(app);
+            else if (app.page == Page::cosmetics) cosmetics_page(app);
+            else if (app.page == Page::animations) animations_page(app);
+        } catch (const std::exception& failure) {
+            recover_page(before, failure.what());
+        } catch (...) {
+            recover_page(before, "unknown error");
+        }
         ImGui::Dummy(ImVec2(0, S(8)));
     }
     ImGui::EndChild();
