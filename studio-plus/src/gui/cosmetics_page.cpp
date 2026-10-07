@@ -8,6 +8,7 @@
 #include "gui/app.h"
 #include "gui/look.h"
 #include "gui/page_kit.h"
+#include "gui/project_page.h"
 #include "gui/widgets.h"
 
 #include <shellapi.h>
@@ -473,7 +474,7 @@ void replace_view(App& app) {
         if (ImGui::Button("OPEN FOLDER"))
             ShellExecuteW(nullptr, L"open", fs::path(utf8_to_wide(r.value("output", ""))).parent_path().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         ImGui::SameLine();
-        if (ImGui::Button("BUILD AND INSTALL IN PROJECT & MODS")) app.page = Page::project;
+        if (ImGui::Button("BUILD AND INSTALL IN PROJECT & MODS")) build_in_project(app, r.value("output", ""));
     }
     end_tile();
 }

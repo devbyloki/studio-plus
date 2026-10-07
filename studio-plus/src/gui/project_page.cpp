@@ -127,6 +127,7 @@ void open_in_explorer(const std::string& path) {
 
 const std::vector<FileFilter> project_filter{{L"ReSkate projects (*.fbproject)", L"*.fbproject"}};
 const std::vector<FileFilter> fbmod_filter{{L"Frosty mods (*.fbmod)", L"*.fbmod"}};
+const std::vector<FileFilter> build_filter{{L"Mods and projects (*.fbmod, *.fbproject)", L"*.fbmod;*.fbproject"}};
 
 // ---------------------------------------------------------------- a command's last run on this page
 
@@ -279,6 +280,7 @@ struct State {
     bool new_only = false;
     std::vector<int> resource_order;  // indices into the resources, in the table's sort order
     bool resort = true;
+    Run exported;  // project export of the open project
     Run fbmod_info;
     std::string fbmod_path;
     bool fbmod_verbose = false;
@@ -381,11 +383,17 @@ void inspect_fbmod(const std::string& path) {
     if (const Command* c = command("mod", "info")) g.fbmod_info.start(*c, args);
 }
 
-void add_fbmod(const std::string& path) {
+bool in_build(const std::string& path) {
     const std::string key = folded(path);
-    if (std::none_of(g.fbmods.begin(), g.fbmods.end(), [&](const std::string& p) { return folded(p) == key; }))
-        g.fbmods.push_back(path);
+    return std::any_of(g.fbmods.begin(), g.fbmods.end(), [&](const std::string& p) { return folded(p) == key; });
 }
+
+// Adds an .fbmod or .fbproject to the build list (mod compile exports a project itself).
+void add_fbmod(const std::string& path) {
+    if (!in_build(path)) g.fbmods.push_back(path);
+}
+
+bool is_project(const std::string& path) { return lower(wide_to_utf8(fs::path(utf8_to_wide(path)).extension().native())) == ".fbproject"; }
 
 // ---------------------------------------------------------------- reading `mod list`
 
@@ -916,8 +924,34 @@ void project_view(const Json& p) {
         g.resort = true;
     }
     resources_table(resources);
-    wrapped_muted("To build it, export the project as .fbmod in ReSkate Studio, then add the .fbmod under BUILD & INSTALL. "
-                  "No command turns a .fbproject into an .fbmod yet.");
+
+    // Building: the project can go in the build list as it is (mod compile exports it on the way), or be
+    // exported as an .fbmod to share.
+    ImGui::Spacing();
+    const std::string file = p.value("file", "");
+    const Command* export_command = command("project", "export");
+    ImGui::BeginDisabled(!export_command || file.empty() || g.exported.busy());
+    if (primary_button("EXPORT .FBMOD", ImVec2(S(170), 0))) g.exported.start(*export_command, Json{{"file", file}});
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    const bool listed = in_build(file);
+    ImGui::BeginDisabled(listed || file.empty());
+    if (ImGui::Button(listed ? "IN THE BUILD" : "ADD TO BUILD")) add_fbmod(file);
+    ImGui::EndDisabled();
+    wrapped_muted("EXPORT .FBMOD writes it as an .fbmod next to the project, to share or keep. ADD TO BUILD puts the project "
+                  "itself in the build list under BUILD & INSTALL; the build exports it on the way.");
+    if (export_command) command_line(*export_command, Json{{"file", file.empty() ? "<file>" : file}});
+    run_status(g.exported);
+    if (g.exported.worked() && g.exported.result.is_object()) {
+        const std::string wrote = g.exported.result.value("output", "");
+        coloured(color::good, "Exported " + text_of(get(g.exported.result, "resources")) + " resources, " +
+                                  size_text(number_of(g.exported.result, "bytes")) + ".");
+        field("FBMOD", wrote);
+        const bool wrote_listed = in_build(wrote);
+        ImGui::BeginDisabled(wrote_listed);
+        if (ImGui::Button(wrote_listed ? "FBMOD IN THE BUILD" : "ADD THE FBMOD TO BUILD")) add_fbmod(wrote);
+        ImGui::EndDisabled();
+    }
 }
 
 void fbmod_view(const Json& m) {
@@ -1000,7 +1034,7 @@ void project_section(App& app) {
 // ---------------------------------------------------------------- build and install
 
 void fbmod_list(App& app) {
-    caption("FBMOD FILES, IN THE ORDER THEY APPLY");
+    caption("MOD FILES, IN THE ORDER THEY APPLY");
     const float width = ImGui::GetContentRegionAvail().x;
     int move = -1, direction = 0, remove = -1;
     for (size_t i = 0; i < g.fbmods.size(); ++i) {
@@ -1032,7 +1066,8 @@ void fbmod_list(App& app) {
         ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::SmallButton("INSPECT")) {
-            inspect_fbmod(path);
+            if (is_project(path)) open_project(path);
+            else inspect_fbmod(path);
             g.section = Section::project;
         }
         ImGui::SameLine();
@@ -1042,16 +1077,16 @@ void fbmod_list(App& app) {
     }
     if (move >= 0) std::swap(g.fbmods[static_cast<size_t>(move)], g.fbmods[static_cast<size_t>(move + direction)]);
     if (remove >= 0) g.fbmods.erase(g.fbmods.begin() + remove);
-    if (g.fbmods.empty()) wrapped_muted("No .fbmod files yet.");
+    if (g.fbmods.empty()) wrapped_muted("Nothing to build yet.");
     ImGui::Dummy(ImVec2(0, S(2)));
-    if (ImGui::Button("ADD .FBMOD", ImVec2(S(150), 0))) {
+    if (ImGui::Button("ADD MOD FILE", ImVec2(S(150), 0))) {
         const auto start = g.fbmods.empty() ? std::wstring() : utf8_to_wide(g.fbmods.back());
-        const auto picked = pick_path(app.window, false, start, fbmod_filter);
+        const auto picked = pick_path(app.window, false, start, build_filter);
         if (!picked.empty()) add_fbmod(wide_to_utf8(picked));
     }
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
-    ImGui::TextDisabled("or drop .fbmod files on the window. The last one wins where two change the same resource.");
+    ImGui::TextDisabled("or drop .fbmod / .fbproject files here. The last one wins where two change the same resource.");
 }
 
 void build_section(App& app) {
@@ -1080,7 +1115,7 @@ void build_section(App& app) {
     if (primary_button("BUILD", ImVec2(S(140), S(36)))) g.compile.start(*compile, compile_args);
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !can_build && !g.compile.busy())
-        ImGui::SetTooltip(g.fbmods.empty() ? "Add an .fbmod first" : "Choose a staging folder first");
+        ImGui::SetTooltip(g.fbmods.empty() ? "Add an .fbmod or .fbproject first" : "Choose a staging folder first");
     run_status(g.compile);
     if (g.compile.worked()) {
         const Json& r = g.compile.result;
@@ -1242,8 +1277,8 @@ void health_section() {
 
 // ---------------------------------------------------------------- drops and state
 
-// A .fbproject dropped anywhere opens; .fbmod files go to the build list on BUILD & INSTALL, and are
-// inspected elsewhere. Anything else is left for the path field it landed on.
+// On BUILD & INSTALL, dropped .fbmod and .fbproject files go into the build list. Elsewhere a .fbproject
+// opens and an .fbmod is inspected. Anything else is left for the path field it landed on.
 void take_drops() {
     std::vector<std::string> projects, fbmods;
     {
@@ -1259,11 +1294,15 @@ void take_drops() {
         g_drop.pending = false;
         g_drop.paths.clear();
     }
+    if (g.section == Section::build) {
+        // On BUILD & INSTALL everything dropped goes into the build list, projects included.
+        for (const auto& f : projects) add_fbmod(f);
+        for (const auto& f : fbmods) add_fbmod(f);
+        return;
+    }
     if (!projects.empty()) open_project(projects.front());
     if (fbmods.empty()) return;
-    if (g.section == Section::build) {
-        for (const auto& f : fbmods) add_fbmod(f);
-    } else {
+    {
         inspect_fbmod(fbmods.front());
         g.section = Section::project;
     }
@@ -1304,6 +1343,7 @@ void poll_runs() {
         }
     }
     g.fbmod_info.poll();
+    g.exported.poll();
     g.compile.poll();
     // An install changes what is installed: read the list again.
     if (g.deploy.poll() && g.deploy.worked() && folded(g.listed_folder) == folded(folder_in_use())) refresh_mods();
@@ -1321,15 +1361,26 @@ void save_state() {
     g.written = std::move(now);
 }
 
+void ensure_loaded(App& app) {
+    if (g.loaded) return;
+    const std::string saved = path_utf8(app.settings.game_root);
+    g.folder = saved;
+    g.saved_folder = saved;
+    load_state();
+}
+
 } // namespace
+
+void build_in_project(App& app, const std::string& file) {
+    ensure_loaded(app);
+    if (!file.empty()) add_fbmod(file);
+    g.section = Section::build;
+    app.page = Page::project;
+}
 
 void project_page(App& app) {
     const std::string saved = path_utf8(app.settings.game_root);
-    if (!g.loaded) {
-        g.folder = saved;
-        g.saved_folder = saved;
-        load_state();
-    }
+    ensure_loaded(app);
     // Settings changed the Skate folder: follow it, unless this page was pointed somewhere else.
     if (saved != g.saved_folder) {
         if (folded(g.folder) == folded(g.saved_folder)) g.folder = saved;

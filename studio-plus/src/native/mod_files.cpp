@@ -6,6 +6,8 @@
 #include <bcrypt.h>
 
 #include <array>
+#include <cstring>
+#include <iterator>
 #include <fstream>
 #include <map>
 #include <stdexcept>
@@ -92,9 +94,11 @@ void write_fbproject(const std::filesystem::path& path, const ModInfo& info, con
         const dingosdk::frostbite::Guid zero{};
         o.raw(r.kind == ModResource::Kind::res ? zero.bytes.data() : r.id.bytes.data(), 16);
         o.raw(chunk ? r.id.bytes.data() : zero.bytes.data(), 16);
-        for (int i = 0; i < 12; ++i) o.num<std::uint8_t>(0);
-        o.num<std::uint64_t>(chunk ? r.data.size() : 0);
-        o.num<std::int32_t>(-1);
+        o.num<std::uint32_t>(chunk ? r.range_start : 0);
+        o.num<std::uint32_t>(chunk ? r.range_end : 0);
+        o.num<std::uint32_t>(chunk ? r.logical_offset : 0);
+        o.num<std::uint64_t>(chunk ? (r.logical_size ? r.logical_size : r.data.size()) : 0);
+        o.num<std::int32_t>(chunk ? r.first_mip : -1);
         for (const auto* list : {&r.bundles, &r.superbundles, &r.links}) {
             o.num<std::uint32_t>(static_cast<std::uint32_t>(list->size()));
             for (const auto& s : *list) o.str32(s);
@@ -104,6 +108,93 @@ void write_fbproject(const std::filesystem::path& path, const ModInfo& info, con
         o.bytes_of(r.data);
     }
     save(path, o.bytes);
+}
+
+namespace {
+// Bounds-checked little-endian reads over a whole file.
+class In {
+public:
+    explicit In(std::vector<std::byte> bytes) : bytes_(std::move(bytes)) {}
+    void raw(void* out, std::size_t n) {
+        if (n > bytes_.size() - at_) throw std::runtime_error("the file ends early (at byte " + std::to_string(at_) + ")");
+        std::memcpy(out, bytes_.data() + at_, n);
+        at_ += n;
+    }
+    template <class T> T num() { T v{}; raw(&v, sizeof(T)); return v; }
+    std::vector<std::byte> block(std::uint64_t n) {
+        if (n > bytes_.size() - at_) throw std::runtime_error("a block runs past the end of the file (at byte " + std::to_string(at_) + ")");
+        std::vector<std::byte> out(bytes_.begin() + static_cast<std::ptrdiff_t>(at_),
+                                   bytes_.begin() + static_cast<std::ptrdiff_t>(at_ + n));
+        at_ += static_cast<std::size_t>(n);
+        return out;
+    }
+    std::string str32() {
+        const auto n = num<std::uint32_t>();
+        const auto b = block(n);
+        return std::string(reinterpret_cast<const char*>(b.data()), b.size());
+    }
+    std::vector<std::string> list() {
+        const auto n = num<std::uint32_t>();
+        if (n > bytes_.size() - at_) throw std::runtime_error("a list count is larger than the file");
+        std::vector<std::string> out;
+        for (std::uint32_t i = 0; i < n; ++i) out.push_back(str32());
+        return out;
+    }
+    bool done() const { return at_ == bytes_.size(); }
+
+private:
+    std::vector<std::byte> bytes_;
+    std::size_t at_ = 0;
+};
+} // namespace
+
+Project read_fbproject(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) throw std::runtime_error("cannot open the file");
+    std::vector<char> raw((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    std::vector<std::byte> bytes(raw.size());
+    std::memcpy(bytes.data(), raw.data(), raw.size());
+    In in(std::move(bytes));
+
+    char magic[8];
+    in.raw(magic, 8);
+    if (std::memcmp(magic, "RSPROJT1", 8) != 0) throw std::runtime_error("not a ReSkate Studio project (no RSPROJT1 header)");
+    const auto version = in.num<std::uint32_t>();
+    if (version != 2) throw std::runtime_error("project format version " + std::to_string(version) + " is not supported (expected 2)");
+    Project p;
+    p.profile = in.str32();
+    p.info.head = in.num<std::uint32_t>();
+    for (auto* s : {&p.info.title, &p.info.author, &p.info.category, &p.info.version, &p.info.description, &p.info.link}) *s = in.str32();
+    in.block(40);  // icon and screenshot slots
+    const auto count = in.num<std::uint32_t>();
+    for (std::uint32_t i = 0; i < count; ++i) {
+        ModResource r;
+        const auto kind = in.num<std::uint32_t>();
+        const auto base = kind & 0xFF;
+        if (base < 1 || base > 3) throw std::runtime_error("resource " + std::to_string(i) + " has unknown kind " + std::to_string(kind));
+        r.kind = static_cast<ModResource::Kind>(base);
+        r.added = (kind & 0x100) != 0;
+        r.name = in.str32();
+        r.user_data = in.str32();
+        r.res_type = in.num<std::uint32_t>();
+        r.res_rid = in.num<std::uint64_t>();
+        r.res_meta = in.block(in.num<std::uint64_t>());
+        in.raw(r.id.bytes.data(), 16);
+        dingosdk::frostbite::Guid second;
+        in.raw(second.bytes.data(), 16);
+        r.range_start = in.num<std::uint32_t>();
+        r.range_end = in.num<std::uint32_t>();
+        r.logical_offset = in.num<std::uint32_t>();
+        r.logical_size = in.num<std::uint64_t>();
+        r.first_mip = in.num<std::int32_t>();
+        r.bundles = in.list();
+        r.superbundles = in.list();
+        r.links = in.list();
+        in.num<std::uint8_t>();
+        r.data = in.block(in.num<std::uint64_t>());
+        p.resources.push_back(std::move(r));
+    }
+    return p;
 }
 
 void write_fbmod(const std::filesystem::path& path, const ModInfo& info, const std::vector<ModResource>& resources,
@@ -164,12 +255,12 @@ void write_fbmod(const std::filesystem::path& path, const ModInfo& info, const s
             table.num<std::int32_t>(static_cast<std::int32_t>(r.res_meta.size()));
             table.bytes_of(r.res_meta);
         } else if (r.kind == ModResource::Kind::chunk) {
-            table.num<std::uint32_t>(0);  // range start
-            table.num<std::uint32_t>(0);  // range end
-            table.num<std::uint32_t>(0);  // logical offset
-            table.num<std::uint32_t>(static_cast<std::uint32_t>(r.data.size()));
+            table.num<std::uint32_t>(r.range_start);
+            table.num<std::uint32_t>(r.range_end);
+            table.num<std::uint32_t>(r.logical_offset);
+            table.num<std::uint32_t>(static_cast<std::uint32_t>(r.logical_size ? r.logical_size : r.data.size()));
             table.num<std::int32_t>(0);   // h32
-            table.num<std::int32_t>(-1);  // first mip
+            table.num<std::int32_t>(r.first_mip);
             table.num<std::int32_t>(static_cast<std::int32_t>(r.superbundles.size()));
             for (const auto& s : r.superbundles) table.num<std::uint32_t>(frosty_hash(s));
         }

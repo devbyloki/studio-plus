@@ -24,6 +24,10 @@ struct ModResource {
     std::vector<std::string> superbundles;  // added chunks only
     std::vector<std::string> links;     // a MeshSet lists its chunk ids
     std::vector<std::byte> data;        // uncompressed payload
+    // Chunk placement, as a project records it. logical_size 0 means the payload's size.
+    std::uint32_t range_start = 0, range_end = 0, logical_offset = 0;
+    std::uint64_t logical_size = 0;
+    std::int32_t first_mip = -1;
 };
 
 struct ModInfo {
@@ -32,6 +36,14 @@ struct ModInfo {
 };
 
 void write_fbproject(const std::filesystem::path& path, const ModInfo& info, const std::vector<ModResource>& resources);
+
+struct Project {
+    ModInfo info;
+    std::string profile;
+    std::vector<ModResource> resources;
+};
+// Reads a ReSkate Studio .fbproject. Throws std::runtime_error when the file is not one, or is cut short.
+Project read_fbproject(const std::filesystem::path& path);
 // `game_root` lets payloads be Kraken-compressed with the game's own Oodle; without it (or if Oodle
 // fails) they are stored as raw blocks, which read back the same.
 void write_fbmod(const std::filesystem::path& path, const ModInfo& info, const std::vector<ModResource>& resources,

@@ -7,6 +7,7 @@
 #include "gui/app.h"
 #include "gui/look.h"
 #include "gui/page_kit.h"
+#include "gui/project_page.h"
 #include "gui/widgets.h"
 
 #include <shellapi.h>
@@ -249,7 +250,7 @@ void import_tile(App& app) {
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             ImGui::SetTooltip(project ? "Reads the clip as the project changes it (anim info --project)" : "Only a .fbproject can be read back");
         ImGui::SameLine();
-        if (ImGui::Button("OPEN PROJECT & MODS")) app.page = Page::project;
+        if (ImGui::Button("BUILD AND INSTALL IN PROJECT & MODS")) build_in_project(app, r.value("output", ""));
         kit::status(s.verify, "Read back");
         const Json v = kit::result(s.verify);
         if (v.is_object())

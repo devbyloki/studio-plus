@@ -3,6 +3,7 @@
 #include "commands/commands.h"
 #include "core/engine.h"
 #include "core/settings.h"
+#include "native/mod_files.h"
 #include <windows.h>
 #include <bcrypt.h>
 #include <tlhelp32.h>
@@ -817,6 +818,47 @@ Json text_or_null(const std::string& text) { return text.empty() ? Json(nullptr)
 
 }  // namespace
 
+// The ReSkate folder for Kraken compression, or empty (raw blocks, which read back the same) when none is set.
+fs::path oodle_root(const Context& c, const Json& a) {
+    try {
+        return c.game_root(a);
+    } catch (const Error&) {
+        return {};
+    }
+}
+
+// Writes the .fbproject `project` as the .fbmod `output`: the same resources, with the project's title and
+// author unless `a` overrides them. ReSkate Studio did this with "Export .fbmod"; reskate_cli has no command for it.
+Json export_project(const Context& c, const Json& a, const fs::path& project, const fs::path& output) {
+    native::Project p;
+    try {
+        p = native::read_fbproject(project);
+    } catch (const std::exception& e) {
+        throw Error("not_a_project", path_utf8(project) + ": " + e.what(), {{"path", path_utf8(project)}});
+    }
+    for (const auto& [key, field] : {std::pair{"title", &p.info.title}, {"author", &p.info.author},
+                                     {"version", &p.info.version}, {"description", &p.info.description}})
+        if (const std::string v = a.contains(key) && a[key].is_string() ? a[key].get<std::string>() : ""; !v.empty()) *field = v;
+    if (p.info.title.empty()) p.info.title = path_utf8(project.stem());
+    if (p.info.version.empty()) p.info.version = "1.0";
+    try {
+        native::write_fbmod(output, p.info, p.resources, oodle_root(c, a));
+    } catch (const std::exception& e) {
+        throw Error("write_failed", std::string(e.what()) + ": " + path_utf8(output), {{"path", path_utf8(output)}});
+    }
+    int ebx = 0, res = 0, chunks = 0, added = 0;
+    for (const auto& r : p.resources) {
+        (r.kind == native::ModResource::Kind::ebx ? ebx : r.kind == native::ModResource::Kind::res ? res : chunks) += 1;
+        added += r.added ? 1 : 0;
+    }
+    std::error_code ec;
+    return {{"project", path_utf8(project)}, {"output", path_utf8(output)}, {"title", p.info.title},
+            {"author", p.info.author.empty() ? Json(nullptr) : Json(p.info.author)}, {"version", p.info.version}, {"profile", p.profile},
+            {"head", p.info.head}, {"resources", p.resources.size()},
+            {"ebx", ebx}, {"res", res}, {"chunks", chunks}, {"added", added},
+            {"bytes", static_cast<std::uint64_t>(fs::file_size(output, ec))}};
+}
+
 void register_mod_commands(Registry& r) {
     // ---- mod compile ------------------------------------------------------------------------------
     r.add({
@@ -829,14 +871,14 @@ void register_mod_commands(Registry& r) {
             ".reskate-studio-patch (records the Skate.exe SHA-256), Win32\\...\\cas_01.cas archives and level TOCs "
             "(about 60 MB for a small animation mod). Install the result with 'mod deploy'.\n\n"
             "Gotchas: the staging folder must be outside the Skate folder, and if it exists it must be empty or a "
-            "previous staging folder (which is wiped and rebuilt), and the fbmods must not sit inside it. A .fbproject is not accepted: export it as .fbmod "
-            "in ReSkate Studio first. The build is tied to the exact Skate.exe; after a game update, compile again. "
+            "previous staging folder (which is wiped and rebuilt), and the fbmods must not sit inside it. A .fbproject is "
+            "exported to an .fbmod first (as 'project export' does) into the Studio+ data folder's project-exports. The build is tied to the exact Skate.exe; after a game update, compile again. "
             "Not every fbmod compiles (a skin-tone fbmod failed with 'Cosmetic shader parameter dependency is "
             "unavailable'); a failure after loading leaves a staging folder holding only the marker. Takes 3-4 s "
             "for a small mod (2.7 s is the game index load).",
         .params = {
             {"staging-dir", ParamType::Path, "Output staging folder, outside the Skate folder. Created if missing", true, true},
-            {"fbmod", ParamType::List, "One or more binary .fbmod files, applied in order", true, true},
+            {"fbmod", ParamType::List, "One or more .fbmod (or .fbproject) files, applied in order", true, true},
             game_root_param(),
         },
         .examples = {"mod compile C:\\mods\\stage C:\\mods\\anim.fbmod",
@@ -860,6 +902,7 @@ void register_mod_commands(Registry& r) {
             }
             std::vector<std::string> args = {"compile-mod", path_utf8(game), staging_s};
             Json inputs = Json::array();
+            Json converted = Json::array();
             for (const auto& item : a["fbmod"]) {
                 fs::path p = absolute_path(fs::path(utf8_to_wide(item.get<std::string>())));
                 require_file(p, "fbmod");
@@ -868,9 +911,17 @@ void register_mod_commands(Registry& r) {
                                 path_utf8(p) + " is inside the staging folder, which is wiped before the build. Move the fbmod out first.",
                                 {{"param", "fbmod"}, {"path", path_utf8(p)}});
                 std::wstring ext = lower(p.extension().native());
-                if (ext == L".fbproject")
-                    throw Error("not_an_fbmod", path_utf8(p) + " is a project, not an fbmod. Export it as .fbmod in ReSkate Studio first.",
-                                {{"param", "fbmod"}, {"path", path_utf8(p)}});
+                if (ext == L".fbproject") {
+                    // The engine only takes .fbmod: export the project first, as 'project export' does.
+                    const fs::path folder = Settings::data_dir() / L"project-exports";
+                    std::error_code ec;
+                    fs::create_directories(folder, ec);
+                    const fs::path fbmod = folder / (std::to_wstring(converted.size() + 1) + L"-" + p.stem().native() + L".fbmod");
+                    c.progress(-1, "Exporting " + path_utf8(p.filename()) + " as .fbmod");
+                    Json exported = export_project(c, a, p, fbmod);
+                    converted.push_back({{"project", path_utf8(p)}, {"fbmod", path_utf8(fbmod)}});
+                    p = fbmod;
+                }
                 args.push_back(path_utf8(p));
                 inputs.push_back(path_utf8(p));
             }
@@ -891,6 +942,7 @@ void register_mod_commands(Registry& r) {
             }
             Json counts = kv_object(run.out_lines);
             Json out = {{"staging_dir", staging_s}, {"patch_dir", path_utf8(staging / L"Patch")}, {"fbmods", inputs}};
+            if (!converted.empty()) out["exported_projects"] = converted;
             for (const char* k : {"resources", "bundles", "tocs"}) out[k] = counts.contains(k) ? counts[k] : Json(nullptr);
             out["skate_sha256"] = path_or_null(marker_sha(staging / L"Patch" / L".reskate-studio-patch"));
             out["seconds"] = run.seconds;
@@ -1217,6 +1269,46 @@ void register_mod_commands(Registry& r) {
 
     // ---- project info ----------------------------------------------------------------------------
     r.add({
+        .group = "project", .name = "export",
+        .summary = "Export a .fbproject as an .fbmod, ready for mod compile",
+        .description =
+            "Reads a ReSkate Studio .fbproject and writes the same resources as a binary .fbmod (the old Studio's "
+            "'Export .fbmod'; reskate_cli has no command for it). Title, author, version and description come from "
+            "the project unless given here. Payloads are compressed with the game's Oodle when a ReSkate folder is "
+            "set, else stored uncompressed (bigger, but the game reads both). Writes only --output; it must not be "
+            "inside the ReSkate folder. Build the result with 'mod compile'.",
+        .params = {
+            {"file", ParamType::Path, ".fbproject to export", true, true},
+            {"output", ParamType::Path, ".fbmod to write (default: next to the project, same name)", false, true},
+            {"title", ParamType::String, "Mod title (default: the project's)"},
+            {"author", ParamType::String, "Mod author (default: the project's)"},
+            {"version", ParamType::String, "Mod version (default: the project's, else 1.0)"},
+            {"description", ParamType::String, "Mod description (default: the project's)"},
+            game_root_param(),
+        },
+        .examples = {"project export C:\\mods\\Untitled.fbproject",
+                     "project export scooter.fbproject C:\\mods\\scooter.fbmod --title \"Razor Scooter\" --json"},
+        .run = [](Context& c, const Json& a) -> Json {
+            const fs::path file = to_path(a, "file");
+            require_file(file, "file");
+            if (lower(file.extension().native()) == L".fbmod")
+                throw Error("not_a_project", path_utf8(file) + " is already an fbmod; build it with: studio-plus mod compile",
+                            {{"param", "file"}});
+            fs::path output = arg_string(a, "output").empty() ? fs::path(file).replace_extension(L".fbmod") : to_path(a, "output");
+            if (lower(output.extension().native()) != L".fbmod")
+                throw Error("bad_output", "--output must end in .fbmod: " + path_utf8(output), {{"param", "output"}});
+            if (const fs::path game = oodle_root(c, a); !game.empty() && is_within(output, game))
+                throw Error("output_in_game_folder", "--output is inside the ReSkate folder (" + path_utf8(game) +
+                            "). Write it somewhere else; this command never changes the game install", {{"param", "output"}});
+            if (!dir_exists(output.parent_path()))
+                throw Error("folder_missing", "The folder for --output does not exist: " + path_utf8(output.parent_path()),
+                            {{"param", "output"}});
+            c.progress(-1, "Exporting " + path_utf8(file.filename()));
+            return export_project(c, a, file, output);
+        },
+    });
+
+    r.add({
         .group = "project", .name = "info",
         .summary = "Show the metadata and resource list of a .fbproject",
         .description =
@@ -1224,8 +1316,8 @@ void register_mod_commands(Registry& r) {
             "profile, head (game data build) and every resource it holds: kind (ebx asset, res resource or chunk "
             "GUID), name, size in bytes and whether it is a new asset ('added') rather than a replacement. Needs no "
             "game folder.\n\nGotchas: the ebx/res/chunk kind is read from the engine's numeric kind (1, 2, 3); the "
-            "mapping is inferred from the names. There is no command that turns a .fbproject into an .fbmod; "
-            "use 'Export .fbmod' in ReSkate Studio, then 'mod compile'.",
+            "mapping is inferred from the names. Turn a project into an .fbmod with 'project export' ('mod compile' "
+            "also takes a .fbproject and exports it itself).",
         .params = {
             {"file", ParamType::Path, ".fbproject file", true, true},
         },
