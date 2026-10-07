@@ -17,4 +17,7 @@ void cosmetics_page(App& app);
 //   --run loads the catalog (audit) on browse, reads the mesh on replace and, with a model, replaces it.
 void cosmetics_startup(const Json& args, bool run);
 
+// Opens REPLACE A GAME MESH on `mesh` and reads it (from the Assets page).
+void cosmetics_replace_mesh(App& app, const std::string& mesh);
+
 } // namespace studio::gui

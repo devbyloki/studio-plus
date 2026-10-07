@@ -5,10 +5,14 @@
 #include "core/settings.h"
 #include "native/asset_index.h"
 #include "native/asset_views.h"
+#include "native/game_assets.h"
+#include "native/mod_files.h"
+#include "Engine/Resource/ebx_document.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cwctype>
 #include <fstream>
 #include <map>
 
@@ -363,21 +367,27 @@ void register_browse_commands(Registry& r) {
 
     r.add({
         .group = "ebx", .name = "set",
-        .summary = "Write an edited copy of one EBX asset to a .ebx file",
+        .summary = "Edit fields of one EBX asset into a .fbproject, .fbmod or loose .ebx",
         .description = std::string(
             "Reads the EBX asset, changes the fields given with --set Path=Value (give it once per field), writes the "
-            "result with ReSkate's EBX writer to --output and reads it back to check every change landed; nothing is "
-            "saved if one did not. Paths are field names joined with dots, array items as [n], and an optional leading "
-            "[n] for an instance other than the root: Name, [3].Enabled, Transform.trans.x, Items[0]. Booleans, numbers, "
-            "enum member names and strings can be set. The game is not touched: the .ebx is a draft. roundtrip_identical "
-            "says whether the untouched asset writes back byte for byte.") + k_index_note,
+            "result with ReSkate's EBX writer and reads it back to check every change landed; nothing is saved if one "
+            "did not. Paths are field names joined with dots, array items as [n], and an optional leading [n] for an "
+            "instance other than the root: Name, [3].Enabled, Transform.trans.x, Items[0]. Booleans, numbers, enum "
+            "member names and strings can be set.\n\n"
+            "--output decides what is written: a .fbproject gets the edited asset as a change to the game (an existing "
+            "project keeps everything else it holds, and an earlier edit of the same asset is replaced, so several "
+            "edits collect in one project); an .fbmod is written new with just this asset, ready for 'mod compile'; "
+            "a .ebx is the loose file. The game is not touched. Edits build on the game's asset, not on an earlier "
+            "edit in the project: give every field for one asset in the same run. roundtrip_identical says whether "
+            "the untouched asset writes back byte for byte.") + k_index_note,
         .params = {
             {"name", ParamType::String, "EBX asset name", true, true},
             {"set", ParamType::List, "Path=Value, e.g. Name=MyAsset or [2].Enabled=false", true},
-            {"output", ParamType::Path, "The .ebx file to write", true},
+            {"output", ParamType::Path, "File to write: .fbproject (added to if it exists), .fbmod or .ebx", true},
             game_root_param(),
         },
-        .examples = {"ebx set characters/lua/luafacecompositor --set Name=Characters/Lua/Mine --output mine.ebx"},
+        .examples = {"ebx set characters/lua/luafacecompositor --set Name=Characters/Lua/Mine --output mine.ebx",
+                     "ebx set <asset> --set [2].Enabled=false --output C:\\mods\\tweaks.fbproject"},
         .run = [](Context& c, const Json& a) -> Json {
             const auto index = index_for(c, a);
             const auto& e = require_entry(*index, Kind::ebx, a["name"].get<std::string>());
@@ -389,8 +399,58 @@ void register_browse_commands(Registry& r) {
                     throw Error("invalid_arguments", "--set takes Path=Value, got '" + text + "'", {{"param", "set"}});
                 edits.push_back({text.substr(0, eq), text.substr(eq + 1)});
             }
-            return native::ebx_set(*index, e, *native::game_files(c.game_root(a)), edits,
-                                   fs::path(utf8_to_wide(a["output"].get<std::string>())));
+            const fs::path output = fs::absolute(fs::path(utf8_to_wide(a["output"].get<std::string>())));
+            std::wstring ext = output.extension().native();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
+            if (ext != L".fbproject" && ext != L".fbmod" && ext != L".ebx")
+                throw Error("bad_output", "--output must end in .fbproject, .fbmod or .ebx: " + path_utf8(output), {{"param", "output"}});
+            const fs::path root = c.game_root(a);
+            if (ext == L".ebx") return native::ebx_set(*index, e, *native::game_files(root), edits, output);
+
+            std::vector<std::byte> written;
+            Json out = native::ebx_set(*index, e, *native::game_files(root), edits, output, &written);
+            const std::string name(index->name(e));
+            native::ModResource res;
+            res.kind = native::ModResource::Kind::ebx;
+            res.name = name;
+            res.data = written;
+            res.id = dingosdk::frostbite::ebx::read_root_info(written).fileGuid;
+            c.progress(-1, "Finding the bundles " + name + " is in");
+            native::GameAssets game(root);
+            game.on_progress = [&c](std::string_view message) { c.progress(-1, message); };
+            res.bundles = game.bundles_with(dingosdk::frostbite::AssetKind::ebx, name);
+
+            native::Project project;
+            std::error_code ec;
+            const bool add_to = ext == L".fbproject" && fs::exists(output, ec);
+            if (add_to) {
+                try {
+                    project = native::read_fbproject(output);
+                } catch (const std::exception& failure) {
+                    throw Error("not_a_project", path_utf8(output) + " exists but is not a project it can add to: " + failure.what(),
+                                {{"param", "output"}});
+                }
+            } else {
+                project.info.title = "EBX edits";
+                project.info.description = "Edited with ReSkate Studio+.";
+            }
+            auto& list = project.resources;
+            const auto same = std::find_if(list.begin(), list.end(), [&](const native::ModResource& r) {
+                return r.kind == res.kind && r.name == res.name;
+            });
+            out["replaced_earlier_edit"] = same != list.end();
+            if (same != list.end()) *same = std::move(res);
+            else list.push_back(std::move(res));
+            try {
+                if (ext == L".fbproject") native::write_fbproject(output, project.info, list);
+                else native::write_fbmod(output, project.info, list, root);
+            } catch (const std::exception& failure) {
+                throw Error("write_failed", std::string(failure.what()) + ": " + path_utf8(output), {{"param", "output"}});
+            }
+            out["format"] = ext == L".fbproject" ? "fbproject" : "fbmod";
+            out["added_to_existing"] = add_to;
+            out["project_resources"] = list.size();
+            return out;
         },
     });
 

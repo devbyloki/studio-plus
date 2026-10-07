@@ -15,4 +15,7 @@ void animations_page(App& app);
 //   --run searches for `find`, reads `clip` and, with fbx, lists its takes.
 void animations_startup(const Json& args, bool run);
 
+// Opens the page on `clip` and reads it (from the Assets page).
+void animations_open_clip(App& app, const std::string& clip);
+
 } // namespace studio::gui

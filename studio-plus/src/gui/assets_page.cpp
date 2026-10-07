@@ -5,6 +5,9 @@
 // depending on what the asset is. Every one of those is a registry command on the job system, so
 // Activity keeps the studio-plus line for it; the page only holds what is on screen.
 #include "gui/assets_page.h"
+#include "gui/animations_page.h"
+#include "gui/cosmetics_page.h"
+#include "gui/project_page.h"
 
 #include "core/settings.h"
 #include "gui/app.h"
@@ -154,8 +157,9 @@ void job_progress(const std::shared_ptr<Job>& job, const char* fallback) {
     wrapped_muted(message.empty() ? fallback : message);
 }
 
-// IFileSaveDialog with one file type. Empty when cancelled.
-std::wstring pick_save(HWND owner, const std::wstring& name, const wchar_t* type_name, const wchar_t* pattern, const wchar_t* ext) {
+// IFileSaveDialog with one file type. Empty when cancelled. `replace_prompt` off for a file that is added to.
+std::wstring pick_save(HWND owner, const std::wstring& name, const wchar_t* type_name, const wchar_t* pattern, const wchar_t* ext,
+                       bool replace_prompt = true) {
     ComPtr<IFileSaveDialog> dialog;
     if (FAILED(CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) return {};
     COMDLG_FILTERSPEC spec[]{{type_name, pattern}, {L"All files", L"*.*"}};
@@ -164,7 +168,10 @@ std::wstring pick_save(HWND owner, const std::wstring& name, const wchar_t* type
     dialog->SetFileName(name.c_str());
     FILEOPENDIALOGOPTIONS options{};
     dialog->GetOptions(&options);
-    dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT);
+    options |= FOS_FORCEFILESYSTEM;
+    if (replace_prompt) options |= FOS_OVERWRITEPROMPT;
+    else options &= ~static_cast<FILEOPENDIALOGOPTIONS>(FOS_OVERWRITEPROMPT);
+    dialog->SetOptions(options);
     if (FAILED(dialog->Show(owner))) return {};
     ComPtr<IShellItem> result;
     PWSTR path = nullptr;
@@ -205,9 +212,13 @@ const char* const kind_labels[]{"All kinds", "EBX assets", "Resources", "Chunks"
 const char* const categories[]{"", "texture", "mesh", "lua", "level", "shader", "animation", "audio", "video", "blueprint", "other"};
 const char* const category_labels[]{"All groups", "Textures", "Meshes", "Lua scripts", "Levels", "Shaders", "Animations",
                                     "Audio", "Video", "Blueprints", "Other"};
-enum class Tab { properties, texture, lua, info };
-const char* const tab_labels[]{"PROPERTIES", "TEXTURE", "LUA", "INFO"};
-const char* const tab_views[]{"properties", "texture", "lua", "info"};
+enum class Tab { properties, texture, lua, media, info };
+const char* const tab_labels[]{"PROPERTIES", "TEXTURE", "LUA", "", "INFO"};  // media: see media_label
+const char* const tab_views[]{"properties", "texture", "lua", "media", "info"};
+constexpr int tab_count = 5;
+
+// Assets with a view of their own, read by the command for that kind of asset.
+enum class Media { none, mesh, sound, video, level, clip };
 
 struct Folder {
     std::shared_ptr<Job> job;
@@ -269,7 +280,10 @@ struct AssetsState {
     std::string export_message;
     std::map<std::string, std::string> edits;  // field path -> new value, saved with ebx set
     std::string editing, edit_text;            // the path whose value is being typed
+    std::shared_ptr<Job> media_job, media_extra;  // the media tab's read, and EXPORT RAW / DECODE TEST
     std::shared_ptr<Job> draft_job;
+    std::string draft_project;  // the .fbproject drafts were last saved into
+    std::string draft_saved;    // the project the last save went into, for BUILD IN PROJECT & MODS
     std::string draft_message;
     bool draft_ok = false;
     bool export_ok = false;
@@ -319,7 +333,31 @@ void filters_changed() {
     if (!g.query.empty()) start_search(false);
 }
 
+Media media_of(const Json& info) {
+    if (!info.is_object()) return Media::none;
+    const std::string type = info.value("type", ""), kind = info.value("kind", "");
+    if (info.value("category", "") == "mesh" && (kind == "ebx" || type == "MeshSet")) return Media::mesh;
+    if (kind != "ebx") return Media::none;
+    if (type == "NewWaveAsset" || type == "LocalizedWaveAsset") return Media::sound;
+    if (type == "MovieTexture2Asset") return Media::video;
+    if (type == "LevelData") return Media::level;
+    if (type == "ClipControllerAsset") return Media::clip;
+    return Media::none;
+}
+
+const char* media_label(Media m) {
+    switch (m) {
+    case Media::mesh: return "MESH";
+    case Media::sound: return "SOUND";
+    case Media::video: return "VIDEO";
+    case Media::level: return "LEVEL";
+    case Media::clip: return "CLIP";
+    default: return "";
+    }
+}
+
 bool has_view(const char* view) {
+    if (std::string_view(view) == "media") return media_of(g.info) != Media::none;
     for (const auto& v : g.views) if (v.is_string() && v.get<std::string>() == view) return true;
     return false;
 }
@@ -349,6 +387,16 @@ void start_view(Tab tab) {
     }
     if (tab == Tab::lua && g.lua.is_null() && !g.lua_job && g.lua_error.empty())
         g.lua_job = run("asset", "lua-source", {{"name", name}, {"kind", g.pick.kind}});
+    if (tab == Tab::media && !g.media_job) {
+        switch (media_of(g.info)) {
+        case Media::mesh: g.media_job = run("mesh", "info", {{"mesh", name}}); break;
+        case Media::sound: g.media_job = run("audio", "info", {{"asset", name}}); break;
+        case Media::video: g.media_job = run("video", "info", {{"asset", name}}); break;
+        case Media::level: g.media_job = run("level", "preview", {{"level", name}}); break;
+        case Media::clip: g.media_job = run("anim", "info", {{"clip", name}}); break;
+        case Media::none: break;
+        }
+    }
 }
 
 void select(App& app, const std::string& name, const std::string& kind, bool remember = true) {
@@ -359,6 +407,7 @@ void select(App& app, const std::string& name, const std::string& kind, bool rem
     g.info = g.ebx = g.texture = g.lua = Json();
     g.ebx_error.clear(); g.texture_error.clear(); g.lua_error.clear(); g.lua_text.clear();
     g.ebx_job.reset(); g.texture_job.reset(); g.lua_job.reset();
+    g.media_job.reset(); g.media_extra.reset();
     g.views = Json::array();
     g.mip = -1;
     g.export_message.clear();
@@ -463,9 +512,10 @@ void poll(App& app) {
             g.info = out["result"];
             g.views = g.info.value("views", Json::array());
             const auto& startup_tab = g.startup.value("tab", "");
-            Tab tab = has_view("texture") ? Tab::texture : has_view("lua") ? Tab::lua : has_view("properties") ? Tab::properties : Tab::info;
-            for (int i = 0; i < 4; ++i)
-                if (startup_tab == tab_views[i] && (i == 3 || has_view(tab_views[i]))) tab = static_cast<Tab>(i);
+            Tab tab = has_view("texture") ? Tab::texture : has_view("lua") ? Tab::lua : has_view("media") ? Tab::media
+                    : has_view("properties") ? Tab::properties : Tab::info;
+            for (int i = 0; i < tab_count; ++i)
+                if (startup_tab == tab_views[i] && (i == tab_count - 1 || has_view(tab_views[i]))) tab = static_cast<Tab>(i);
             g.startup.erase("tab");
             start_view(tab);
         } else {
@@ -502,11 +552,17 @@ void poll(App& app) {
     }
     if (take(g.draft_job, out)) {
         g.draft_ok = out.value("ok", false);
+        g.draft_saved.clear();
         if (g.draft_ok) {
             const auto& r = out["result"];
-            g.draft_message = "Saved " + r.value("output", "") + " with " + std::to_string(r["changes"].size()) + " change(s)." +
+            const std::string format = r.value("format", "ebx");
+            if (format == "ebx") g.draft_message = "Saved " + r.value("output", "");
+            else g.draft_message = std::string(r.value("replaced_earlier_edit", false) ? "Replaced this asset's earlier edit in " : "Added to ") +
+                                   r.value("output", "") + " (" + std::to_string(r.value("project_resources", 0)) + " assets in it)";
+            g.draft_message += " with " + std::to_string(r["changes"].size()) + " change(s)." +
                               (r.value("roundtrip_identical", false) ? "" : " Note: this asset does not write back byte for byte "
                                "even unchanged, so check it before use.");
+            if (format != "ebx") g.draft_saved = r.value("output", "");
             g.edits.clear();
         } else {
             g.draft_message = error_text(out);
@@ -985,16 +1041,34 @@ void draft_bar(App& app) {
         ImGui::PopStyleColor();
         ImGui::SameLine();
         ImGui::BeginDisabled(running(g.draft_job));
-        if (primary_button("SAVE AS .EBX")) {
-            const auto path = pick_save(app.window, utf8_to_wide(last_part(g.pick.name)) + L".ebx", L"EBX asset", L"*.ebx", L"ebx");
+        const auto save_to = [](const std::string& output) {
+            Json sets = Json::array();
+            for (const auto& [field, value] : g.edits) sets.push_back(field + "=" + value);
+            g.draft_job = run("ebx", "set", {{"name", g.pick.name}, {"set", sets}, {"output", output}});
+            g.draft_message.clear();
+        };
+        const std::string project_name = g.draft_project.empty() ? std::string()
+                                       : wide_to_utf8(fs::path(utf8_to_wide(g.draft_project)).filename().native());
+        if (!g.draft_project.empty()) {
+            if (primary_button(("SAVE INTO " + upper(project_name)).c_str())) save_to(g.draft_project);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add this edit to %s (ebx set --output)", g.draft_project.c_str());
+            ImGui::SameLine();
+        }
+        if (g.draft_project.empty() ? primary_button("SAVE INTO PROJECT...") : ImGui::Button("OTHER PROJECT...")) {
+            const auto path = pick_save(app.window, L"EBX edits.fbproject", L"ReSkate project", L"*.fbproject", L"fbproject", false);
             if (!path.empty()) {
-                Json sets = Json::array();
-                for (const auto& [field, value] : g.edits) sets.push_back(field + "=" + value);
-                g.draft_job = run("ebx", "set", {{"name", g.pick.name}, {"set", sets}, {"output", wide_to_utf8(path)}});
-                g.draft_message.clear();
+                g.draft_project = wide_to_utf8(path);
+                save_to(g.draft_project);
             }
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write this asset with the changes to a .ebx file (ebx set)");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Pick a .fbproject: an existing one keeps what it holds and gets this edit; a new one is made");
+        ImGui::SameLine();
+        if (ImGui::Button("SAVE AS .EBX")) {
+            const auto path = pick_save(app.window, utf8_to_wide(last_part(g.pick.name)) + L".ebx", L"EBX asset", L"*.ebx", L"ebx");
+            if (!path.empty()) save_to(wide_to_utf8(path));
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write this asset with the changes to a loose .ebx file");
         ImGui::SameLine();
         if (ImGui::Button("DISCARD")) {
             g.edits.clear();
@@ -1006,6 +1080,7 @@ void draft_bar(App& app) {
         ImGui::TextDisabled("Saving...");
     } else if (!g.draft_message.empty()) {
         wrapped_colour(g.draft_message, g.draft_ok ? color::good : color::danger);
+        if (!g.draft_saved.empty() && ImGui::Button("BUILD AND INSTALL IN PROJECT & MODS")) build_in_project(app, g.draft_saved);
     }
 }
 
@@ -1197,6 +1272,118 @@ void info_view(App& app) {
     ImGui::EndChild();
 }
 
+// ---------------------------------------------------------------- mesh, sound, video, level and clip
+
+Json outcome_of(const std::shared_ptr<Job>& job) {
+    if (!job || !job->done.load()) return Json::object();
+    std::lock_guard lock(job->mutex);
+    return job->outcome;
+}
+
+// The scalar fields of a result as rows, in order, skipping `skip`.
+void result_fields(const Json& r, std::initializer_list<const char*> skip = {}) {
+    for (const auto& [key, value] : r.items()) {
+        if (value.is_object() || value.is_array()) continue;
+        if (std::any_of(skip.begin(), skip.end(), [&](const char* k) { return key == k; })) continue;
+        std::string label = key;
+        std::replace(label.begin(), label.end(), '_', ' ');
+        field(upper(label).c_str(), value.is_null() ? "-" : scalar_text(value));
+    }
+}
+
+void mesh_details(const Json& r) {
+    const Json lods = r.value("lods", Json::array());
+    field("LODS", std::to_string(lods.size()));
+    if (const Json b = r.value("bounds", Json()); b.is_object() && b["min"].is_array() && b["max"].is_array() &&
+                                                 b["min"].size() == 3 && b["max"].size() == 3) {
+        char size[96];
+        std::snprintf(size, sizeof size, "%.2f x %.2f x %.2f m", b["max"][0].get<double>() - b["min"][0].get<double>(),
+                      b["max"][1].get<double>() - b["min"][1].get<double>(), b["max"][2].get<double>() - b["min"][2].get<double>());
+        field("SIZE", size);
+    }
+    const Json bundles = r.value("bundles", Json::array());
+    field("BUNDLES", std::to_string(bundles.size()) + (r.value("shared", false) ? "  (shared: replacing it changes it everywhere)" : ""));
+    if (lods.empty() || !lods[0].is_object()) return;
+    caption("LOD 0 SECTIONS");
+    if (ImGui::BeginTable("##mesh_sections", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Section", ImGuiTableColumnFlags_WidthStretch, 3);
+        ImGui::TableSetupColumn("Triangles", ImGuiTableColumnFlags_WidthStretch, 1);
+        ImGui::TableSetupColumn("Vertices", ImGuiTableColumnFlags_WidthStretch, 1);
+        ImGui::TableSetupColumn("Bones", ImGuiTableColumnFlags_WidthStretch, 1);
+        ImGui::TableHeadersRow();
+        for (const auto& s : lods[0].value("sections", Json::array())) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(s.value("section", "").c_str());
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(grouped(static_cast<long long>(number_of(s, "triangles"))).c_str());
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(grouped(static_cast<long long>(number_of(s, "vertices"))).c_str());
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(grouped(static_cast<long long>(number_of(s, "bones"))).c_str());
+        }
+        ImGui::EndTable();
+    }
+}
+
+void media_view(App& app) {
+    const Media m = media_of(g.info);
+    const std::string& name = g.pick.name;
+    // What can be done with it comes first, so it works even when the read below fails.
+    if (m == Media::mesh) {
+        if (primary_button("REPLACE IT IN COSMETICS")) cosmetics_replace_mesh(app, name);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Opens COSMETICS > REPLACE A GAME MESH on this mesh");
+        ImGui::SameLine();
+        ImGui::BeginDisabled(running(g.media_extra));
+        if (ImGui::Button("EXPORT RAW FILES")) {
+            const fs::path dir = Settings::data_dir() / L"asset-exports" / fs::path(utf8_to_wide(file_safe(last_part(name))));
+            g.media_extra = run("mesh", "export-raw", {{"mesh", name}, {"output-dir", path_utf8(dir)}});
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The MeshSet resource, its EBX and geometry chunks, as the game stores them");
+    } else if (m == Media::clip) {
+        if (primary_button("OPEN IN ANIMATIONS")) animations_open_clip(app, name);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Export it to FBX, edit it and put it back");
+    } else if (m == Media::video) {
+        ImGui::BeginDisabled(running(g.media_extra));
+        if (ImGui::Button("DECODE TEST")) g.media_extra = run("video", "decode-test", {{"asset", name}});
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Decodes the first frame and the sound with Windows Media Foundation");
+    }
+    ImGui::Spacing();
+
+    if (running(g.media_job)) {
+        job_progress(g.media_job, "Reading it...");
+    } else if (const Json out = outcome_of(g.media_job); !out.empty()) {
+        if (!out.value("ok", false)) {
+            wrapped_colour(error_text(out), color::danger);
+        } else {
+            const Json& r = out["result"];
+            if (m == Media::mesh) mesh_details(r);
+            else result_fields(r, {"asset", "clip", "level", "mesh"});
+            if (m == Media::sound)
+                wrapped_muted("Studio+ reads the sound's format; the engine has no way to save or play it yet.");
+        }
+        caption("SAME AS  " + g.media_job->cli);
+    }
+
+    if (g.media_extra) {
+        ImGui::Spacing();
+        if (running(g.media_extra)) {
+            job_progress(g.media_extra, "Working...");
+        } else if (const Json out = outcome_of(g.media_extra); !out.empty()) {
+            if (!out.value("ok", false)) {
+                wrapped_colour(error_text(out), color::danger);
+            } else if (m == Media::mesh) {
+                const std::string dir = out["result"].value("output_dir", "");
+                wrapped_colour("Written to " + (dir.empty() ? std::string("the asset-exports folder") : dir), color::good);
+                if (!dir.empty() && ImGui::Button("OPEN FOLDER"))
+                    ShellExecuteW(nullptr, L"open", utf8_to_wide(dir).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            } else {
+                caption("DECODE TEST");
+                result_fields(out["result"], {"asset"});
+            }
+            caption("SAME AS  " + g.media_extra->cli);
+        }
+    }
+}
+
 void export_buttons(App& app) {
     const std::string name = g.pick.name;
     const std::wstring base = utf8_to_wide(last_part(name));
@@ -1338,10 +1525,12 @@ void inspector(App& app, ImVec2 size) {
     }
 
     // Tabs: only the views this asset has, then INFO.
-    for (int t = 0; t < 4; ++t) {
-        if (t != 3 && !has_view(tab_views[t])) continue;
-        const bool on = static_cast<int>(g.tab) == t;
-        if (on ? primary_button(tab_labels[t]) : ImGui::Button(tab_labels[t])) start_view(static_cast<Tab>(t));
+    for (int t = 0; t < tab_count; ++t) {
+        const Tab tab = static_cast<Tab>(t);
+        if (tab != Tab::info && !has_view(tab_views[t])) continue;
+        const char* label = tab == Tab::media ? media_label(media_of(g.info)) : tab_labels[t];
+        const bool on = g.tab == tab;
+        if (on ? primary_button(label) : ImGui::Button(label)) start_view(tab);
         ImGui::SameLine();
     }
     ImGui::NewLine();
@@ -1351,6 +1540,7 @@ void inspector(App& app, ImVec2 size) {
     if (g.tab == Tab::properties) properties_view(app);
     else if (g.tab == Tab::texture) texture_view();
     else if (g.tab == Tab::lua) lua_view();
+    else if (g.tab == Tab::media) media_view(app);
     else info_view(app);
     ImGui::EndChild();
     end_panel();

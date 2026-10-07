@@ -397,7 +397,7 @@ void assign(const ebx::Document& doc, Target& t, const std::string& text, const 
 } // namespace
 
 Json ebx_set(const AssetIndex& index, const Entry& e, const GameFiles& files, const std::vector<EbxEdit>& edits,
-             const fs::path& output) {
+             const fs::path& output, std::vector<std::byte>* written_out) {
     const auto bytes = files.read(e.location());
     ebx::Document doc;
     try {
@@ -429,9 +429,11 @@ Json ebx_set(const AssetIndex& index, const Entry& e, const GameFiles& files, co
                         {{"path", edits[i].path}});
         changes[i]["new"] = now;
     }
-    write_file(output, written.data(), written.size());
-    return {{"name", index.name(e)}, {"output", path_utf8(output)}, {"bytes", written.size()},
-            {"original_bytes", bytes.size()}, {"roundtrip_identical", identical}, {"changes", changes}};
+    Json out = {{"name", index.name(e)}, {"output", path_utf8(output)}, {"bytes", written.size()},
+                {"original_bytes", bytes.size()}, {"roundtrip_identical", identical}, {"changes", changes}};
+    if (written_out) *written_out = written;
+    else write_file(output, written.data(), written.size());
+    return out;
 }
 
 // ---------------------------------------------------------------- textures

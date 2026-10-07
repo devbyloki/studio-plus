@@ -528,6 +528,14 @@ void cosmetics_startup(const Json& args, bool run) {
     g_cos.startup_run = run;
 }
 
+void cosmetics_replace_mesh(App& app, const std::string& mesh) {
+    start();
+    g_cos.view = View::replace;
+    g_cos.mesh = mesh;
+    read_mesh();
+    app.page = Page::cosmetics;
+}
+
 void cosmetics_page(App& app) {
     start();
     kit::heading("COSMETICS");

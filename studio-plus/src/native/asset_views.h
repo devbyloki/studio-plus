@@ -30,8 +30,9 @@ struct EbxEdit {
 };
 // Applies `edits` to the asset's EBX, writes the result to `output` (written with ReSkate's EBX writer)
 // and reads it back to check every edit landed. Scalar fields only: bool, integers, enums, floats, strings.
+// With `written` the bytes are handed back instead, and `output` is not written.
 Json ebx_set(const AssetIndex& index, const Entry& e, const GameFiles& files, const std::vector<EbxEdit>& edits,
-             const std::filesystem::path& output);
+             const std::filesystem::path& output, std::vector<std::byte>* written = nullptr);
 
 // ---------------------------------------------------------------- textures
 

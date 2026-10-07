@@ -266,6 +266,14 @@ void animations_startup(const Json& args, bool run) {
     g_anim.startup_run = run;
 }
 
+void animations_open_clip(App& app, const std::string& clip) {
+    start();
+    set_clip(clip);
+    g_anim.show = "info";
+    g_anim.show_frames = 0;
+    app.page = Page::animations;
+}
+
 void animations_page(App& app) {
     start();
     kit::heading("ANIMATIONS");
