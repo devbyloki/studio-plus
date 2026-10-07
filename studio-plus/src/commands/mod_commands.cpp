@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <cwctype>
 #include <format>
 #include <iterator>
@@ -818,6 +819,64 @@ Json text_or_null(const std::string& text) { return text.empty() ? Json(nullptr)
 
 }  // namespace
 
+// A Mods folder name: 1-64 letters, digits, spaces, _ - or ., not starting with '.', not ending with a space
+// or '.', and not a Windows device name. Throws Error("invalid_mod_folder").
+void check_mod_folder(const std::string& name, const char* param = "mod-folder") {
+    bool name_ok = !name.empty() && name.size() <= 64 && name[0] != '.';
+    for (char ch : name)
+        if (!(std::isalnum(static_cast<unsigned char>(ch)) || ch == ' ' || ch == '_' || ch == '-' || ch == '.')) name_ok = false;
+    if (!name_ok)
+        throw Error("invalid_mod_folder",
+                    "Mod folder name \"" + name + "\" is not usable: 1-64 letters, digits, spaces, '_', '-' or '.', not starting with '.'",
+                    {{"param", param}});
+    // Windows device names cannot be folder names, with or without an extension ("nul.txt").
+    std::string base = lower_ascii(name.substr(0, name.find('.')));
+    while (!base.empty() && base.back() == ' ') base.pop_back();
+    const bool device = base == "con" || base == "prn" || base == "aux" || base == "nul" ||
+                        (base.size() == 4 && (base.rfind("com", 0) == 0 || base.rfind("lpt", 0) == 0) && base[3] >= '0' && base[3] <= '9');
+    if (device)
+        throw Error("invalid_mod_folder", "Mod folder name \"" + name + "\" is a reserved Windows device name; pick another name",
+                    {{"param", param}});
+    if (name.back() == ' ' || name.back() == '.')
+        throw Error("invalid_mod_folder",
+                    "Mod folder name \"" + name + "\" must not end with a space or '.' (Windows drops them from folder names)",
+                    {{"param", param}});
+}
+
+// Where deploy backups go: <game>\.ReSkateStudio-Mod-backup.
+fs::path backup_root(const fs::path& game) { return game / L".ReSkateStudio-Mod-backup"; }
+
+// The folder mod `name` is installed in: the Mods folder ReSkate reads (ModData\Default\Mods when ModData
+// exists), else <game>\Mods, where reskate_cli deploy-mod writes. Empty when it is in neither.
+fs::path installed_mod(const fs::path& game, const std::string& name) {
+    for (const fs::path& mods : {modlist::data_root(game) / L"Mods", game / L"Mods"})
+        if (const fs::path p = mods / utf8_to_wide(name); dir_exists(p)) return p;
+    return {};
+}
+
+// A folder ReSkate Studio (or Studio+) built: deploy writes the .reskate-studio-patch stamp into it.
+bool studio_built(const fs::path& folder) { return file_exists(folder / L".reskate-studio-patch"); }
+
+// "2026-10-07 22-40-05", local time, for backup folder names.
+std::string stamp_now() {
+    const std::time_t now = std::time(nullptr);
+    std::tm local{};
+    localtime_s(&local, &now);
+    char text[32];
+    std::strftime(text, sizeof text, "%Y-%m-%d %H-%M-%S", &local);
+    return text;
+}
+
+// Moves a folder within the game folder's drive. Throws Error("move_failed").
+void move_folder(const fs::path& from, const fs::path& to) {
+    std::error_code ec;
+    fs::create_directories(to.parent_path(), ec);
+    fs::rename(from, to, ec);
+    if (ec)
+        throw Error("move_failed", "Could not move " + path_utf8(from) + " to " + path_utf8(to) + ": " + ec.message() +
+                    " (is a file in it open, or the game running?)", {{"from", path_utf8(from)}, {"to", path_utf8(to)}});
+}
+
 // The ReSkate folder for Kraken compression, or empty (raw blocks, which read back the same) when none is set.
 fs::path oodle_root(const Context& c, const Json& a) {
     try {
@@ -973,28 +1032,8 @@ void register_mod_commands(Registry& r) {
                      "mod deploy C:\\mods\\stage ScooterPush --game-root D:\\TestSkate --json"},
         .writes_game = true,
         .run = [](Context& c, const Json& a) -> Json {
-            std::string name = a["mod-folder"];
-            bool name_ok = !name.empty() && name.size() <= 64 && name[0] != '.';
-            for (char ch : name)
-                if (!(std::isalnum(static_cast<unsigned char>(ch)) || ch == ' ' || ch == '_' || ch == '-' || ch == '.')) name_ok = false;
-            if (!name_ok)
-                throw Error("invalid_mod_folder",
-                            "Mod folder name \"" + name + "\" is not usable: 1-64 letters, digits, spaces, '_', '-' or '.', not starting with '.'",
-                            {{"param", "mod-folder"}});
-            {
-                // Windows device names cannot be folder names, with or without an extension ("nul.txt").
-                std::string base = lower_ascii(name.substr(0, name.find('.')));
-                while (!base.empty() && base.back() == ' ') base.pop_back();
-                bool device = base == "con" || base == "prn" || base == "aux" || base == "nul" ||
-                              (base.size() == 4 && (base.rfind("com", 0) == 0 || base.rfind("lpt", 0) == 0) && base[3] >= '0' && base[3] <= '9');
-                if (device)
-                    throw Error("invalid_mod_folder", "Mod folder name \"" + name + "\" is a reserved Windows device name; pick another name",
-                                {{"param", "mod-folder"}});
-            }
-            if (name.back() == ' ' || name.back() == '.')
-                throw Error("invalid_mod_folder",
-                            "Mod folder name \"" + name + "\" must not end with a space or '.' (Windows drops them from folder names)",
-                            {{"param", "mod-folder"}});
+            const std::string name = a["mod-folder"];
+            check_mod_folder(name);
             fs::path game = checked_game_root(c, a);
             fs::path staging = to_path(a, "staging-dir");
             std::string staging_s = path_utf8(staging);
@@ -1029,6 +1068,102 @@ void register_mod_commands(Registry& r) {
                 } else notes.push_back(line);
             }
             out["notes"] = notes;
+            return out;
+        },
+    });
+
+    // ---- mod uninstall / restore --------------------------------------------------------------------
+    r.add({
+        .group = "mod", .name = "uninstall",
+        .summary = "Take a Studio-built mod out of the Mods folder (kept as a backup you can restore)",
+        .description =
+            "WRITES TO THE GAME FOLDER. Moves <Mods>\\<mod-folder> into <game>\\.ReSkateStudio-Mod-backup as "
+            "\"<mod-folder> (removed <date time>)\", so the game stops loading it and 'mod restore' can put it back. "
+            "Nothing is deleted. Only mods ReSkate Studio or Studio+ installed (they hold .reskate-studio-patch) are "
+            "taken out; other mods belong to the ReSkate launcher's mod manager. mods.json is left as it is (the "
+            "launcher lists a row whose folder is gone as missing). Skate must be closed.",
+        .params = {
+            {"mod-folder", ParamType::String, "The mod's folder name under Mods, as 'mod list' shows it", true, true},
+            game_root_param(),
+        },
+        .examples = {"mod uninstall Razor_Scooter_v2", "mod uninstall MyMap --json"},
+        .writes_game = true,
+        .run = [](Context& c, const Json& a) -> Json {
+            const std::string name = a["mod-folder"];
+            check_mod_folder(name);
+            const fs::path game = checked_game_root(c, a);
+            const fs::path folder = installed_mod(game, name);
+            if (folder.empty())
+                throw Error("mod_not_found", "No mod folder called " + name + " in the Mods folder; see 'mod list'", {{"param", "mod-folder"}});
+            if (!studio_built(folder))
+                throw Error("mod_folder_not_managed", name + " was not installed by ReSkate Studio, so Studio+ leaves it alone. "
+                            "Turn it off or remove it in the ReSkate launcher's mod manager.", {{"param", "mod-folder"}, {"path", path_utf8(folder)}});
+            if (skate_running_from(game)) throw Error("game_running", "Skate is running. Close it before taking a mod out.");
+            const std::string backup_name = name + " (removed " + stamp_now() + ")";
+            const fs::path backup = backup_root(game) / utf8_to_wide(backup_name);
+            c.progress(-1, "Moving " + name + " to the backups");
+            move_folder(folder, backup);
+            return {{"mod_folder", name}, {"removed_from", path_utf8(folder)}, {"backup", backup_name}, {"backup_path", path_utf8(backup)},
+                    {"restore_with", "studio-plus mod restore \"" + backup_name + "\" --mod-folder " + name}};
+        },
+    });
+
+    r.add({
+        .group = "mod", .name = "restore",
+        .summary = "Put a backed-up mod back into the Mods folder (undo a deploy or an uninstall)",
+        .description =
+            "WRITES TO THE GAME FOLDER. Moves a folder from <game>\\.ReSkateStudio-Mod-backup back into the Mods "
+            "folder. 'mod deploy' keeps the version it replaced there under the mod's own name, and 'mod uninstall' "
+            "keeps \"<name> (removed <date time>)\"; 'mod list' lists them all under backups. When the mod is "
+            "installed now, that version swaps places with the backup (kept as \"<name> (replaced <date time>)\"), so "
+            "restoring is itself undoable. Only Studio-built folders are moved. Skate must be closed.",
+        .params = {
+            {"backup", ParamType::String, "Folder name under .ReSkateStudio-Mod-backup, as 'mod list' shows it under backups", true, true},
+            {"mod-folder", ParamType::String, "Mods folder name to restore it as (default: the backup's name without \" (removed ...)\")"},
+            game_root_param(),
+        },
+        .examples = {"mod restore Razor_Scooter_v2", "mod restore \"MyMap (removed 2026-10-07 22-40-05)\" --mod-folder MyMap"},
+        .writes_game = true,
+        .run = [](Context& c, const Json& a) -> Json {
+            const std::string backup_name = a["backup"];
+            if (backup_name.empty() || backup_name.find_first_of("\\/:") != std::string::npos || backup_name == "." || backup_name == "..")
+                throw Error("invalid_arguments", "--backup is a folder name under .ReSkateStudio-Mod-backup, not a path", {{"param", "backup"}});
+            std::string name = arg_string(a, "mod-folder");
+            if (name.empty()) name = backup_name.substr(0, backup_name.find(" ("));
+            check_mod_folder(name);
+            const fs::path game = checked_game_root(c, a);
+            const fs::path backup = backup_root(game) / utf8_to_wide(backup_name);
+            if (!dir_exists(backup))
+                throw Error("backup_not_found", "No backup called " + backup_name + " in " + path_utf8(backup_root(game)) + "; see 'mod list'",
+                            {{"param", "backup"}});
+            if (!studio_built(backup))
+                throw Error("mod_folder_not_managed", backup_name + " is not a ReSkate Studio mod folder (no .reskate-studio-patch)",
+                            {{"param", "backup"}});
+            if (skate_running_from(game)) throw Error("game_running", "Skate is running. Close it before restoring a mod.");
+            fs::path target = installed_mod(game, name);
+            Json out = {{"mod_folder", name}, {"restored_from", path_utf8(backup)}};
+            if (!target.empty()) {
+                if (!studio_built(target))
+                    throw Error("mod_folder_not_managed", "Mods\\" + name + " is there and was not installed by ReSkate Studio; "
+                                "restore under another --mod-folder", {{"param", "mod-folder"}, {"path", path_utf8(target)}});
+                const std::string kept = name + " (replaced " + stamp_now() + ")";
+                c.progress(-1, "Moving the installed " + name + " to the backups");
+                move_folder(target, backup_root(game) / utf8_to_wide(kept));
+                out["previous_kept_as"] = kept;
+                try {
+                    move_folder(backup, target);
+                } catch (...) {
+                    // Put the installed version back so a failed restore changes nothing.
+                    std::error_code ec;
+                    fs::rename(backup_root(game) / utf8_to_wide(kept), target, ec);
+                    throw;
+                }
+            } else {
+                const fs::path ours = modlist::data_root(game) / L"Mods";
+                target = (dir_exists(ours) ? ours : game / L"Mods") / utf8_to_wide(name);
+                move_folder(backup, target);
+            }
+            out["mod_path"] = path_utf8(target);
             return out;
         },
     });

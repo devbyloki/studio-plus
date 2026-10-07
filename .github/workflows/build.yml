@@ -38,6 +38,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test project export
         run: python tests/project_export_test.py build/release/studio-plus.exe
+      - name: Test mod uninstall and restore
+        run: python tests/mod_restore_test.py build/release/studio-plus.exe
       - uses: actions/upload-artifact@v4
         with:
           name: studio-plus-windows

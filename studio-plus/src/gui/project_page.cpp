@@ -291,6 +291,13 @@ struct State {
     std::string mod_folder = "ReSkateStudio_Mods";
     Run compile;
     Run deploy;
+    // Taking a mod out and putting a backup back (mod uninstall / mod restore), behind a confirmation.
+    Run change;
+    bool confirm_change = false;
+    const Command* change_command = nullptr;
+    Json change_args;
+    std::string change_title, change_what;
+
     bool confirm = false;  // open the install confirmation this frame
     Json confirm_args;     // what INSTALL runs, fixed when the confirmation opened
     std::string confirm_target;
@@ -496,6 +503,15 @@ std::string joined(const Json& list, const char* separator = ", ") {
     return out;
 }
 
+void ask_change(const char* group, const char* name, Json args, std::string title, std::string what) {
+    g.change_command = command(group, name);
+    if (!g.change_command) return;
+    g.change_args = with_game(std::move(args));
+    g.change_title = std::move(title);
+    g.change_what = std::move(what);
+    g.confirm_change = true;
+}
+
 void mod_details(const ModRow& row) {
     const Json& m = row.mod;
     begin_tile("##mod_details", seed_of(row.name.c_str()));
@@ -561,6 +577,16 @@ void mod_details(const ModRow& row) {
     if (const Json& parks = get(m, "park_maps"); parks.is_array() && !parks.empty()) field("PARK MAPS", joined(parks));
     field("PATH", m.value("path", ""));
     if (ImGui::Button("OPEN FOLDER")) open_in_explorer(m.value("path", ""));
+    if (studio) {
+        ImGui::SameLine();
+        ImGui::BeginDisabled(g.change.busy());
+        if (ImGui::Button("TAKE IT OUT..."))
+            ask_change("mod", "uninstall", Json{{"mod-folder", row.name}}, "TAKE THIS MOD OUT?",
+                       "Moves " + m.value("path", "") + " into .ReSkateStudio-Mod-backup in the Skate folder, so the game "
+                       "stops loading it. Nothing is deleted: RESTORE under MODS FOLDER puts it back.");
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("mod uninstall: kept as a backup you can restore");
+    }
     end_tile();
 }
 
@@ -582,12 +608,60 @@ void mods_folder_tile(const Json& result) {
         value_grid("##last", last, {"path", "version"});
     }
     if (result.contains("backups") && !result["backups"].empty()) {
-        std::string names;
-        for (const auto& b : result["backups"]) names += (names.empty() ? "" : ", ") + b.value("name", "");
-        field("PREVIOUS VERSIONS KEPT", names);
+        caption("KEPT VERSIONS: WHAT AN INSTALL REPLACED, AND MODS TAKEN OUT");
+        for (const auto& b : result["backups"]) {
+            const std::string name = b.value("name", "");
+            ImGui::PushID(name.c_str());
+            ImGui::BeginDisabled(g.change.busy());
+            if (ImGui::SmallButton("RESTORE"))
+                ask_change("mod", "restore", Json{{"backup", name}}, "PUT THIS VERSION BACK?",
+                           "Moves " + b.value("path", "") + " back into the Mods folder. If that mod is installed now, the "
+                           "installed version is kept as a backup instead, so this can be undone the same way.");
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::TextUnformatted(name.c_str());
+            ImGui::PopID();
+        }
     }
     if (ImGui::Button("OPEN MODS FOLDER")) open_in_explorer(result.value("mods_dir", ""));
+    run_status(g.change);
+    if (g.change.worked() && g.change.result.is_object()) {
+        const Json& r = g.change.result;
+        if (r.contains("backup")) coloured(color::good, "Taken out. Kept as \"" + r.value("backup", "") + "\".");
+        else coloured(color::good, "Restored as " + r.value("mod_path", "") +
+                                   (r.contains("previous_kept_as") ? "; the version it replaced is kept as \"" + r.value("previous_kept_as", "") + "\"" : "") + ".");
+    }
     end_tile();
+}
+
+// The confirmation for mod uninstall / mod restore: what moves where, and the command line.
+void change_confirmation() {
+    if (g.confirm_change) {
+        ImGui::OpenPopup("##confirm_change");
+        g.confirm_change = false;
+    }
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(S(640), 0));
+    if (!ImGui::BeginPopupModal("##confirm_change", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize))
+        return;
+    heading(g.change_title.c_str());
+    wrapped_muted("This changes the game folder:");
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextUnformatted(g.change_what.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::Bullet();
+    ImGui::TextWrapped("Skate must be closed.");
+    ImGui::Spacing();
+    if (g.change_command) command_line(*g.change_command, g.change_args);
+    ImGui::Spacing();
+    if (primary_button("GO AHEAD", ImVec2(S(150), S(36))) && g.change_command) {
+        g.change.start(*g.change_command, g.change_args);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("CANCEL", ImVec2(S(130), S(36))) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
 }
 
 void mods_section() {
@@ -765,6 +839,7 @@ void mods_section() {
         ImGui::Spacing();
         mods_folder_tile(result);
     }
+    change_confirmation();
 }
 
 // ---------------------------------------------------------------- project and .fbmod files
@@ -1344,6 +1419,7 @@ void poll_runs() {
     }
     g.fbmod_info.poll();
     g.exported.poll();
+    if (g.change.poll() && g.change.worked()) refresh_mods();
     g.compile.poll();
     // An install changes what is installed: read the list again.
     if (g.deploy.poll() && g.deploy.worked() && folded(g.listed_folder) == folded(folder_in_use())) refresh_mods();

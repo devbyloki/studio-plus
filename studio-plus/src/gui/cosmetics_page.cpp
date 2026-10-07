@@ -57,10 +57,13 @@ struct CosmeticsState {
     std::shared_ptr<Job> make;
 
     // replace a game mesh
-    std::string mesh = deck_mesh, model, output, find, routes, title;
-    bool output_edited = false, hide_trucks = false, hide_wheels = false, hide_self = false, rigid = true;
+    std::string mesh = deck_mesh, model, output, find, routes, title, author, more_hidden;
+    double scale = 1.0;
+    bool output_edited = false, hide_deck = false, hide_trucks = false, hide_wheels = false, hide_self = false, rigid = true;
     std::shared_ptr<Job> find_job, info, replace;
     std::string info_for;
+    std::shared_ptr<Job> own_mesh;  // mesh find for a picked truck item's own mesh
+    std::string own_mesh_for;       // that item's last path part
 
     // native costume
     std::string package, costume_output, costume_fbmod;
@@ -105,28 +108,58 @@ std::string default_output(const std::string& model, const char* ext) {
     return kit::data_path(L"Cosmetics", stem + ext);
 }
 
+// "a, b; c" -> ["a", "b", "c"]: comma, semicolon or newline separated, trimmed, empties dropped.
+Json split_list(const std::string& text) {
+    Json out = Json::array();
+    std::string part;
+    for (size_t i = 0; i <= text.size(); ++i) {
+        if (i == text.size() || text[i] == ',' || text[i] == ';' || text[i] == '\n') {
+            while (!part.empty() && part.front() == ' ') part.erase(part.begin());
+            while (!part.empty() && part.back() == ' ') part.pop_back();
+            if (!part.empty()) out.push_back(part);
+            part.clear();
+        } else {
+            part += text[i];
+        }
+    }
+    return out;
+}
+
 Json replace_args() {
     auto& s = g_cos;
     Json hide = Json::array();
-    if (s.hide_trucks && kit::lower(s.mesh) != truck_mesh) hide.push_back(truck_mesh);
-    if (s.hide_wheels && kit::lower(s.mesh) != wheel_mesh) hide.push_back(wheel_mesh);
-    Json routes = Json::array();
-    std::string part;
-    for (size_t i = 0; i <= s.routes.size(); ++i) {
-        if (i == s.routes.size() || s.routes[i] == ',' || s.routes[i] == ';' || s.routes[i] == '\n') {
-            while (!part.empty() && part.front() == ' ') part.erase(part.begin());
-            while (!part.empty() && part.back() == ' ') part.pop_back();
-            if (!part.empty()) routes.push_back(part);
-            part.clear();
-        } else {
-            part += s.routes[i];
-        }
-    }
-    Json args = {{"mesh", s.mesh}, {"output", s.output}, {"route", routes}, {"hide", hide}, {"title", s.title}};
+    const std::string self = kit::lower(s.mesh);
+    if (s.hide_deck && self != deck_mesh) hide.push_back(deck_mesh);
+    if (s.hide_trucks && self != truck_mesh) hide.push_back(truck_mesh);
+    if (s.hide_wheels && self != wheel_mesh) hide.push_back(wheel_mesh);
+    for (const auto& more : split_list(s.more_hidden))
+        if (kit::lower(more.get<std::string>()) != self) hide.push_back(more);
+    Json args = {{"mesh", s.mesh}, {"output", s.output}, {"route", split_list(s.routes)}, {"hide", hide},
+                 {"title", s.title}, {"author", s.author}};
     if (s.hide_self) args["hide-mesh"] = true;
     else args["model"] = s.model;
     if (s.rigid) args["rigid"] = true;
+    if (s.scale != 1.0) args["scale"] = s.scale;
     return args;
+}
+
+// A truck item may have a mesh of its own (licensed trucks: truck_royal_theroyal -> .../truck_royal_theroyal_mesh).
+// When mesh find has one named after the item, it replaces the generic truck mesh picked meanwhile.
+void take_own_mesh() {
+    auto& s = g_cos;
+    if (!s.own_mesh || kit::running(s.own_mesh)) return;
+    const Json found = kit::result(s.own_mesh);
+    const std::string want = s.own_mesh_for + "_mesh";
+    s.own_mesh.reset();
+    if (!found.is_object()) return;
+    for (const auto& m : found.value("meshes", Json::array())) {
+        const std::string name = m.value("mesh", "");
+        if (kit::lower(kit::leaf(name)) == want) {
+            s.mesh = name;
+            read_mesh();
+            return;
+        }
+    }
 }
 
 void start() {
@@ -287,11 +320,17 @@ void browse_view() {
         if (board_slot(sel->slot)) {
             if (ImGui::Button("REPLACE ITS MESH")) {
                 const std::string slot = kit::lower(sel->slot);
-                s.mesh = slot == "truck" ? truck_mesh : slot == "board_wheelcolor" ? wheel_mesh : deck_mesh;
+                s.mesh = slot == "truck" ? truck_mesh : slot.find("wheel") != std::string::npos ? wheel_mesh : deck_mesh;
                 s.view = View::replace;
                 read_mesh();
+                if (slot == "truck") {
+                    s.own_mesh_for = kit::lower(kit::leaf(sel->item));
+                    s.own_mesh = kit::run("mesh", "find", {{"text", s.own_mesh_for}});
+                }
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Board items share one mesh per part: this replaces it for every board");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Decks, grips and wheels share one mesh per part, and most trucks share one too: replacing it "
+                                  "changes it on every board. Licensed trucks have their own mesh, which is picked when found.");
         } else if (primary_button("USE AS DONOR")) {
             s.donor = sel->item;
             s.view = View::make;
@@ -414,6 +453,8 @@ void replace_view(App& app) {
                "game is not changed: you get a .fbproject or .fbmod for PROJECT & MODS. The model must be in the game's "
                "space: Y up, metres, a board part with its length along Z and the origin on the ground under the board centre.");
     ImGui::Spacing();
+    take_own_mesh();
+    if (kit::running(s.own_mesh)) kit::muted("Looking for " + s.own_mesh_for + "'s own mesh...");
     mesh_picker();
     mesh_details();
     ImGui::Spacing();
@@ -429,6 +470,26 @@ void replace_view(App& app) {
     kit::caption("MATERIAL ROUTES (optional: Material=Section, comma separated; unmatched materials go to the largest section)");
     ImGui::SetNextItemWidth(-1);
     input_text("##routes", s.routes, 0, "Chrome=Deck_Mat, Grip=DeckTop_mat");
+    if (ImGui::BeginTable("##mod_meta", 3, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("title", ImGuiTableColumnFlags_WidthStretch, 3);
+        ImGui::TableSetupColumn("author", ImGuiTableColumnFlags_WidthStretch, 2);
+        ImGui::TableSetupColumn("scale", ImGuiTableColumnFlags_WidthStretch, 1);
+        ImGui::TableNextColumn();
+        kit::caption("MOD TITLE (optional)");
+        ImGui::SetNextItemWidth(-1);
+        input_text("##title", s.title, 0, "The model's file name");
+        ImGui::TableNextColumn();
+        kit::caption("AUTHOR (optional)");
+        ImGui::SetNextItemWidth(-1);
+        input_text("##author", s.author, 0, "Your name");
+        ImGui::TableNextColumn();
+        kit::caption("SCALE");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputDouble("##scale", &s.scale, 0, 0, "%.3f");
+        if (s.scale <= 0) s.scale = 1.0;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale the model by this factor first, e.g. 0.01 for a model in centimetres");
+        ImGui::EndTable();
+    }
     ImGui::Spacing();
     auto option = [](const char* id, bool* value, const char* label, const char* tip) {
         toggle(id, value);
@@ -437,6 +498,8 @@ void replace_view(App& app) {
         ImGui::TextUnformatted(label);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
     };
+    option("##hide_deck", &s.hide_deck, "Hide the deck", "Also hide deck_gen_popsicle_mesh in the same mod (e.g. a whole ride on the trucks)");
+    ImGui::SameLine(0, S(24));
     option("##hide_trucks", &s.hide_trucks, "Hide the trucks", "Also hide truck_gen_default_mesh in the same mod (for a scooter or a board without trucks)");
     ImGui::SameLine(0, S(24));
     option("##hide_wheels", &s.hide_wheels, "Hide the wheels", "Also hide wheel_gen_classic_mesh in the same mod");
@@ -444,6 +507,9 @@ void replace_view(App& app) {
     option("##rigid", &s.rigid, "Keep it rigid", "Skin everything to each section's main bone, so no part turns with the wheels or trucks");
     ImGui::SameLine(0, S(24));
     option("##hide_self", &s.hide_self, "Hide this mesh instead", "No model needed: the mesh is replaced by one 1 mm triangle");
+    kit::caption("MORE MESHES TO HIDE (optional, comma separated game mesh names)");
+    ImGui::SetNextItemWidth(-1);
+    input_text("##more_hidden", s.more_hidden, 0, "e.g. characters/skateboard/.../truck_royal_theroyal_mesh");
     ImGui::Spacing();
     const bool ready = !s.mesh.empty() && !s.output.empty() && (s.hide_self || !s.model.empty());
     ImGui::BeginDisabled(!ready || kit::running(s.replace));
@@ -505,7 +571,11 @@ void costume_view(App& app) {
     }
     kit::status(s.costume_donors, "Donor checked");
     if (const Json r = kit::result(s.costume_donors); r.is_object())
-        kit::muted("Donor assets: " + r.dump());
+        for (auto it = r.begin(); it != r.end(); ++it) {
+            std::string name = it.key();
+            for (auto& ch : name) ch = ch == '_' ? ' ' : static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+            field(name.c_str(), it->is_string() ? it->get<std::string>() : it->dump());
+        }
     ImGui::Spacing();
     kit::caption("CHECK A COSTUME .FBMOD");
     path_field("##costume_fbmod", s.costume_fbmod, app.window, false, {{L"Frosty mod (*.fbmod)", L"*.fbmod"}}, S(110));
