@@ -535,20 +535,34 @@ namespace {
 
 std::string g_page_error;  // the last exception a page threw, shown until dismissed
 
-void recover_page(const ImGuiErrorRecoveryState& before, const char* what) {
+const char* page_name(Page page) {
+    switch (page) {
+    case Page::home: return "HOME";
+    case Page::maps: return "CUSTOM MAPS";
+    case Page::cosmetics: return "COSMETICS";
+    case Page::animations: return "ANIMATIONS";
+    case Page::project: return "PROJECT & MODS";
+    case Page::assets: return "ASSETS";
+    case Page::settings: return "SETTINGS";
+    case Page::commands: return "ALL COMMANDS";
+    }
+    return "?";
+}
+
+void recover_page(const ImGuiErrorRecoveryState& before, Page page, const char* what) {
     ImGuiIO& io = ImGui::GetIO();
     const bool assert_on = io.ConfigErrorRecoveryEnableAssert, tooltip_on = io.ConfigErrorRecoveryEnableTooltip;
     io.ConfigErrorRecoveryEnableAssert = io.ConfigErrorRecoveryEnableTooltip = false;
     ImGui::ErrorRecoveryTryToRecoverState(&before);
     io.ConfigErrorRecoveryEnableAssert = assert_on;
     io.ConfigErrorRecoveryEnableTooltip = tooltip_on;
-    g_page_error = what;
+    g_page_error = std::string(page_name(page)) + ": " + what;
 }
 
 void page_error_banner() {
     if (g_page_error.empty()) return;
     ImGui::PushStyleColor(ImGuiCol_Text, color::danger);
-    ImGui::TextWrapped("This page hit an error and skipped part of a frame: %s", g_page_error.c_str());
+    ImGui::TextWrapped("A page hit an error and skipped part of a frame (%s). Please report it.", g_page_error.c_str());
     ImGui::PopStyleColor();
     if (ImGui::SmallButton("DISMISS")) g_page_error.clear();
     ImGui::Spacing();
@@ -614,9 +628,9 @@ void draw_frame(App& app) {
             else if (app.page == Page::cosmetics) cosmetics_page(app);
             else if (app.page == Page::animations) animations_page(app);
         } catch (const std::exception& failure) {
-            recover_page(before, failure.what());
+            recover_page(before, app.page, failure.what());
         } catch (...) {
-            recover_page(before, "unknown error");
+            recover_page(before, app.page, "unknown error");
         }
         ImGui::Dummy(ImVec2(0, S(8)));
     }
