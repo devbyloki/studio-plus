@@ -37,7 +37,7 @@ struct Item {
 struct CosmeticsState {
     View view = View::browse;
     bool started = false, startup_run = false;
-    Json startup;
+    Json startup = Json::object();  // set only by --page cosmetics; read once by start()
     std::string show;  // startup option: a part of the view to scroll to
     int show_frames = 0;
 
@@ -156,7 +156,7 @@ void take_own_mesh() {
     const Json found = kit::result(s.own_mesh);
     const std::string want = s.own_mesh_for + "_mesh";
     s.own_mesh.reset();
-    if (!found.is_object()) return;
+    if (!found.is_object() || kit::lower(s.mesh) != truck_mesh) return;  // the user picked another mesh meanwhile
     for (const auto& m : found.value("meshes", Json::array())) {
         const std::string name = m.value("mesh", "");
         if (kit::lower(kit::leaf(name)) == want) {
@@ -665,7 +665,7 @@ void costume_view(App& app) {
 } // namespace
 
 void cosmetics_startup(const Json& args, bool run) {
-    g_cos.startup = args;
+    g_cos.startup = args.is_object() ? args : Json::object();
     g_cos.startup_run = run;
 }
 

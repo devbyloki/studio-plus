@@ -189,7 +189,7 @@ def list_bones(arm):
     for pb in arm.pose.bones:
         head = arm.matrix_world @ pb.head
         rows.append({"name": pb.name, "parent": pb.parent.name if pb.parent else None,
-                     "head_m": [round(v * unit, 3) for v in head], "length_m": round(pb.length * unit, 3)})
+                     "head_m": [round(v * unit, 3) for v in head], "length_m": round(world_length(arm, pb) * unit, 3)})
     return rows
 
 
@@ -250,6 +250,11 @@ def measure_grips(meshes, inset):
 
 def world_head(arm, bone):
     return arm.matrix_world @ arm.pose.bones[bone].head
+
+
+def world_length(arm, pose_bone):
+    # In scene units: a bone's own length is in armature space, which an FBX unit scale on the object changes.
+    return (arm.matrix_world @ pose_bone.tail - arm.matrix_world @ pose_bone.head).length
 
 
 def world_tail(arm, bone):
@@ -340,7 +345,7 @@ def solve_reach(arm, bones, board, angle, offset, grip_points, targets):
         forearm = arm.pose.bones[bones[f"forearm_{side}"]]
         upper = forearm.parent
         shoulders[side] = arm.matrix_world @ (upper.head if upper else forearm.head)
-        lengths[side] = forearm.length + (upper.length if upper else 0.0)
+        lengths[side] = world_length(arm, forearm) + (world_length(arm, upper) if upper else 0.0)
 
     def shortfall(lean, drop):
         move = hips_move(board, pivot, angle, lean, offset + Vector((0, -drop, 0)))
@@ -590,7 +595,7 @@ def previews(arm, folder, frames, model_meshes, unit, start, end):
     sticks = []
     mat = material("ride_body", (0.1, 0.3, 0.9, 1.0))
     for pb in arm.pose.bones:
-        if pb.length * unit < 0.02:
+        if world_length(arm, pb) * unit < 0.02:
             continue
         bpy.ops.mesh.primitive_cylinder_add(radius=0.018 / unit, depth=pb.length, vertices=8)
         stick = bpy.context.object

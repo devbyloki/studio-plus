@@ -114,6 +114,8 @@ void require_mesh_file(const fs::path& p, const std::string& param) {
         throw Error("invalid_arguments", "--" + param + " must be an .fbx or .glb file: " + path_utf8(p), {{"param", param}});
 }
 
+}  // namespace
+
 bool path_inside(const fs::path& child, const fs::path& parent) {
     if (parent.empty()) return false;
     std::error_code ec;
@@ -143,6 +145,8 @@ void refuse_game_folder(const Context& c, const fs::path& game_root, const fs::p
                             "). Write it somewhere else; this command never changes the game install",
                         {{"param", param}, {"path", path_utf8(output)}});
 }
+
+namespace {
 
 Json num(const Json& v) { return v.is_null() ? Json(nullptr) : v; }
 
@@ -209,6 +213,8 @@ Json run_ride_script(Context& c, const fs::path& blender, const std::vector<std:
     po.executable = blender;
     po.args = {"--background", "--factory-startup", "--python", path_utf8(ride_script()), "--"};
     po.args.insert(po.args.end(), script_args.begin(), script_args.end());
+    std::error_code ec;
+    fs::create_directories(Settings::data_dir(), ec);
     po.working_dir = Settings::data_dir();
     po.cancel = c.cancel;
     Json result;
@@ -240,6 +246,7 @@ Json run_retarget_ride(Context& c, const Json& a) {
     const std::string ext = lower_ext(output);
     if (ext != ".fbmod" && ext != ".fbproject")
         throw Error("invalid_arguments", "--output must end in .fbmod or .fbproject", {{"param", "output"}});
+    refuse_game_folder(c, c.game_root(a), output, "output");
     const bool passthrough = a.value("passthrough", false);
     fs::path targets = arg_string(a, "targets").empty() ? executable_dir() / L"blender" / L"anim" / L"scooter.json" : path_arg(a, "targets");
     std::error_code ec;
@@ -300,7 +307,7 @@ Json run_retarget_ride(Context& c, const Json& a) {
     }
     return {{"output", path_utf8(output)}, {"format", ext.substr(1)}, {"passthrough", passthrough},
             {"targets", passthrough ? Json(nullptr) : Json(path_utf8(targets))}, {"clips", done},
-            {"output_bytes", static_cast<std::uint64_t>(fs::file_size(output, ec))}};
+            {"output_bytes", fs::is_regular_file(output, ec) ? static_cast<std::uint64_t>(fs::file_size(output, ec)) : 0}};
 }
 
 } // namespace

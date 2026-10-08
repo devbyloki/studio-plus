@@ -911,11 +911,12 @@ Json export_project(const Context& c, const Json& a, const fs::path& project, co
         added += r.added ? 1 : 0;
     }
     std::error_code ec;
+    const auto bytes = fs::file_size(output, ec);
     return {{"project", path_utf8(project)}, {"output", path_utf8(output)}, {"title", p.info.title},
             {"author", p.info.author.empty() ? Json(nullptr) : Json(p.info.author)}, {"version", p.info.version}, {"profile", p.profile},
             {"head", p.info.head}, {"resources", p.resources.size()},
             {"ebx", ebx}, {"res", res}, {"chunks", chunks}, {"added", added},
-            {"bytes", static_cast<std::uint64_t>(fs::file_size(output, ec))}};
+            {"bytes", ec ? 0 : static_cast<std::uint64_t>(bytes)}};
 }
 
 void register_mod_commands(Registry& r) {

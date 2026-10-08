@@ -25,7 +25,7 @@ struct AnimState {
     int take = 0;
     std::shared_ptr<Job> search, info, exported, takes, imported, verify;
     std::string takes_for;   // the FBX `takes` was run on
-    Json startup;
+    Json startup = Json::object();  // set only by --page animations; read once by start()
     bool startup_run = false, started = false;
     std::string show;  // startup option: a step to scroll to
     int show_frames = 0;
@@ -348,7 +348,7 @@ void ride_tile(App& app) {
 } // namespace
 
 void animations_startup(const Json& args, bool run) {
-    g_anim.startup = args;
+    g_anim.startup = args.is_object() ? args : Json::object();
     g_anim.startup_run = run;
 }
 

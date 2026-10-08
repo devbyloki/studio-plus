@@ -405,6 +405,7 @@ void register_browse_commands(Registry& r) {
             if (ext != L".fbproject" && ext != L".fbmod" && ext != L".ebx")
                 throw Error("bad_output", "--output must end in .fbproject, .fbmod or .ebx: " + path_utf8(output), {{"param", "output"}});
             const fs::path root = c.game_root(a);
+            refuse_game_folder(c, root, output, "output");
             if (ext == L".ebx") return native::ebx_set(*index, e, *native::game_files(root), edits, output);
 
             std::vector<std::byte> written;

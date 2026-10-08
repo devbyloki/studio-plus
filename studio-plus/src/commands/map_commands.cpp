@@ -382,6 +382,7 @@ Json inspect_scene(Context& c, const fs::path& scene, fs::path blender, double s
     po.executable = blender;
     po.args = {"--background", "--factory-startup", "--python", path_utf8(script), "--", "--input", path_utf8(scene), "--inspect"};
     if (scale != 1.0) { po.args.push_back("--scale"); po.args.push_back(std::to_string(scale)); }
+    fs::create_directories(Settings::data_dir(), ec);
     po.working_dir = Settings::data_dir();
     po.cancel = c.cancel;
     Json result;

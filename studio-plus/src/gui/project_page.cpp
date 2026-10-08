@@ -135,10 +135,12 @@ struct Run {
     std::shared_ptr<Job> job;
     Json result;        // the last run that worked
     bool taken = true;  // the finished run's result has been taken in
+    bool ok = false;    // whether that run worked
 
     void start(const Command& c, Json args) {
         job = g_jobs.start(c, std::move(args));
         taken = false;
+        ok = false;
     }
     bool busy() const { return job && !job->done.load(); }
     // Takes the result in once the run finishes. True on the frame it does, whether it worked or not.
@@ -146,10 +148,13 @@ struct Run {
         if (taken || !job || !job->done.load()) return false;
         taken = true;
         std::lock_guard lock(job->mutex);
-        if (job->outcome.value("ok", false)) result = job->outcome["result"];
+        ok = job->outcome.value("ok", false);
+        if (ok) result = job->outcome["result"];
         return true;
     }
-    bool worked() const { return job && job->done.load() && job->state() == JobState::ok; }
+    // True once poll() has taken in a run that worked, so `result` is that run's (a job can finish between
+    // poll() and the drawing later in the same frame).
+    bool worked() const { return job && taken && ok; }
 };
 
 // Progress and Cancel while it runs, the error when it failed, and the whole result folded away when it worked.
@@ -506,7 +511,9 @@ std::string joined(const Json& list, const char* separator = ", ") {
 void ask_change(const char* group, const char* name, Json args, std::string title, std::string what) {
     g.change_command = command(group, name);
     if (!g.change_command) return;
-    g.change_args = with_game(std::move(args));
+    // The mods shown were read from listed_folder: act on that folder, whatever the folder field says now.
+    args["game-root"] = g.listed_folder;
+    g.change_args = std::move(args);
     g.change_title = std::move(title);
     g.change_what = std::move(what);
     g.confirm_change = true;

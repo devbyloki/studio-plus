@@ -471,6 +471,7 @@ Json run_new_board_part(Context& c, const Json& a) {
     require_extension(model, "model", {".glb", ".fbx"});
     require_extension(output, "output", {".fbproject", ".fbmod"});
     require_output_dir(output, "output");
+    refuse_game_folder(c, root, output, "output");
     // The engine names the item after the model file: items/<slot>/own_<name>.
     std::string name = trim(arg_string(a, "name"));
     if (name.empty()) name = path_utf8(model.stem());
