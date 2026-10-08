@@ -1,6 +1,6 @@
 # ReSkate ImGui UI and reusable engine code, for a standalone Studio+
 
-Root: `/tmp/claude-1000/-home-pi5-nas-storage-projects-reskate/d583d1ac-0529-4b7b-9832-8cd5917cc033/scratchpad/ReSkate`. All paths below are relative to it.
+Root: a clone of ReSkate (https://github.com/Dingo-Shenanigans/ReSkate, commit `3d259667`). All paths below are relative to it.
 
 ## ImGui version and backends
 - **Version:** Dear ImGui **1.91.9b** (`IMGUI_VERSION_NUM 19191`), pinned to upstream commit `f5befd2d29e66809cd1110a152e375a7f1981f06`. See `External/imgui/imgui.h:31`, `External/manifest.json` and `External/README.md`.

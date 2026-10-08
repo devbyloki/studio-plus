@@ -89,7 +89,7 @@ ground and steps on again. The scooter was a box model with a 0.32 m bar at 0.79
 - The previews show the rider facing the bar, leaning in, with hands on the grips, the front knee forward over
   the deck, and the back foot pushing behind.
 
-## Testing on DA-PC
+## Testing on the test PC
 
 1. **Test mod 1.** Run the same clips with `--passthrough`, then `mod compile` and `mod deploy`. In game,
    standing, rolling and pushing should look exactly as without the mod.

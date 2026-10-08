@@ -1,12 +1,12 @@
 # ReSkate Studio (old, closed source) GUI feature inventory
 
-**How this was found:** strings and RTTI symbols in `ReSkate Studio.exe` and `reskate_cli.exe`, plus a read-only look at `%LOCALAPPDATA%\ReSkateStudio` on DA-PC.
+**How this was found:** strings and RTTI symbols in `ReSkate Studio.exe` and `reskate_cli.exe`, plus a read-only look at `%LOCALAPPDATA%\ReSkateStudio` on the test PC.
 
 **Screenshot attempt failed:** I tried a live capture with `--game … --ui-capture <png> --ui-page PROJECT`. It exits 1 over ssh with "creating the DX12 swap chain failed (HRESULT 0x887A0022)", because ssh has no desktop session. I stopped there. A real capture would need a task running in his logged-on session. `settings.db` was backed up first and is unchanged.
 
 **Files on this side:**
-- Strings: `/tmp/claude-1000/-home-pi5-nas-storage-projects-reskate/d583d1ac-0529-4b7b-9832-8cd5917cc033/scratchpad/disc-gui/` (`studio_a.txt`, `cli_a.txt`)
-- Backup on DA-PC: `C:\dev\studio-plus-discovery\gui\settings.db.orig`
+- Strings: a scratch folder (`studio_a.txt`, `cli_a.txt`)
+- Backup on the test PC: `<test folder>\gui\settings.db.orig`
 
 **Tech:** Dear ImGui 1.91.9b with a DX12 backend (Win32 and WARP fallback), XAudio2 for audio, Media Foundation for WebM, Assimp for FBX/GLB, dxcompiler and dxtex for shaders and textures, and vgmstream plus an EA `sx` encoder in `Native\Audio`.
 
@@ -164,7 +164,7 @@
   - Raw resource payload; Executables (Blender)
 
 ## Settings and state files
-- `%LOCALAPPDATA%\ReSkateStudio\settings.db` is a custom binary key/value store (header `82 EE`, typed entries). Keys: `gameRoot`, `blenderExecutable`, `mapSource`, `mapOutput` (default `…\Builds\Maps`), `mapName`, `mapSlug`, `modStaging` (default `…\Builds\Mods`), `modFolder` (default `ReSkateStudio_Mods`), `assetBrowserWidth`, `cosmeticBrowserWidth`, `cosmeticAutoThumbnail`, `cosmeticShowPlayerModel`, `mods` (list with `enabled`). On DA-PC, `gameRoot` currently holds `C:/Users/lokid/Downloads`.
+- `%LOCALAPPDATA%\ReSkateStudio\settings.db` is a custom binary key/value store (header `82 EE`, typed entries). Keys: `gameRoot`, `blenderExecutable`, `mapSource`, `mapOutput` (default `…\Builds\Maps`), `mapName`, `mapSlug`, `modStaging` (default `…\Builds\Mods`), `modFolder` (default `ReSkateStudio_Mods`), `assetBrowserWidth`, `cosmeticBrowserWidth`, `cosmeticAutoThumbnail`, `cosmeticShowPlayerModel`, `mods` (list with `enabled`). On the test PC, `gameRoot` currently holds `<ReSkate folder>`.
 - `user-agreement.db` holds `version` (2), `textHash`, `accepted` and `acceptedAtUtc`.
 - `Cache\`:
   - `asset-index.bin` (about 295 MB) and `asset-types.bin`, tied to the Skate.exe SHA-256 and TOC hashes

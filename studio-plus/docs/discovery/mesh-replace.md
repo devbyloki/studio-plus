@@ -3,7 +3,7 @@
 Research for `mesh replace` and the long-term "scooter as its own board item". Game build 25414733.
 Everything here was read from the installed game with Studio+'s own readers (`mesh export-raw`,
 `mesh find`, ported from ReSkate's GPL TOC/bundle/CAS code into `src/native/`), from the old
-ReSkate Studio's `Untitled.fbproject` (the Razor Scooter, `C:\Users\lokid\Downloads\reskate-scooter\out`),
+ReSkate Studio's `Untitled.fbproject` (the Razor Scooter, `<scooter project>\out`),
 and from projects `reskate_cli cosmetic-mesh-import` writes. Nothing was verified in the running game.
 
 ## 1. What the old Studio's scooter actually replaced

@@ -1,6 +1,6 @@
 # Blender side of old ReSkate Studio: interface map
 
-Sources: the 5 files in `Native\Blender\` (copied to `/tmp/claude-1000/-home-pi5-nas-storage-projects-reskate/d583d1ac-0529-4b7b-9832-8cd5917cc033/scratchpad/blender-scripts/`), strings from both exes, and real headless runs on DA-PC with Blender 5.2.2 LTS. Run outputs are in `C:\dev\studio-plus-discovery\blender\` (`runtime\` holds a copy of the scripts, `scenes\test.blend` is a test scene, `out\` holds the results). I did not change anything in the Studio folder, the game folder or Blender's user config.
+Sources: the 5 files in `Native\Blender\` (copied to a scratch folder), strings from both exes, and real headless runs on the test PC with Blender 5.2.2 LTS. Run outputs are in `<test folder>\blender\` (`runtime\` holds a copy of the scripts, `scenes\test.blend` is a test scene, `out\` holds the results). I did not change anything in the Studio folder, the game folder or Blender's user config.
 
 ## 1. How Blender gets invoked
 
@@ -130,7 +130,7 @@ The CLI also accepts collision modes the converter never writes: `mesh`, `convex
 7. Rolls back on any failure: restores the previous add-on and catalog, then saves prefs again.
 8. Writes the result JSON `{ok, module, version, sourceSha256, installedFile, blenderVersion, vfxEntries, vfxCatalogFile, vfxCatalogSha256}`, or `{ok:false, error, details}`. Exit code 0 or 1.
 
-On DA-PC there is no `%APPDATA%\Blender Foundation` folder yet, so the add-on has never been installed. I did not run the installer because it writes Blender user prefs.
+On the test PC there is no `%APPDATA%\Blender Foundation` folder yet, so the add-on has never been installed. I did not run the installer because it writes Blender user prefs.
 
 **The add-on itself** ("Skate. Map Export" v2.20.0, `bl_info` blender (3,0,0), sidebar tab View3D > Skate Map) contains:
 - Operators: `sk8.export_map`, `add_spawn`, `add_bus_stop`, `add_grind_curve`, `grind_curve_from_edges`, `merge_by_material`, `apply_collision_selected`, `choose_collision_surface`, `add_audio_volume`, `add_audio_emitter`, `add_npc_route`, `add_native_behavior`, `find_native_vfx`, `import_vfx_catalog`.
@@ -160,7 +160,7 @@ There is no version gate anywhere: Studio, the CLI and the scripts never compare
 - Blender 4.2+ `surface_render_method`
 - Blender 5.0+ PropertyGroup behaviour (grind curve settings)
 
-**On Blender 5.2.2 LTS (DA-PC) it works.** The `test.blend` conversion finished in 3.6 s with exit 0 and status ok, and included a 16-tile 2d pause map. The only noise was `DeprecationWarning: 'Material.use_nodes' is expected to be removed in Blender 6.0`, from 10 call sites. When Blender 6 drops that property, those lines will break.
+**On Blender 5.2.2 LTS (the test PC) it works.** The `test.blend` conversion finished in 3.6 s with exit 0 and status ok, and included a 16-tile 2d pause map. The only noise was `DeprecationWarning: 'Material.use_nodes' is expected to be removed in Blender 6.0`, from 10 call sites. When Blender 6 drops that property, those lines will break.
 
 Procedural bake forces Cycles on the CPU. The pause map uses Workbench.
 

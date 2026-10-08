@@ -63,7 +63,7 @@ In the window: COSMETICS > OWN BOARD ITEM. Alternatively, pick a truck in BROWSE
   - Share the mod with the people you ride with.
 - Remove Razor_Scooter_v2 first (PROJECT & MODS > TAKE IT OUT), or every deck is still the scooter.
 
-## Testing on DA-PC
+## Testing on the test PC
 
 1. Build the item as above (or in the window), then `mod compile` and `mod deploy`.
 2. In game, open the board customisation and look in the **trucks** list for the new item. Check that:

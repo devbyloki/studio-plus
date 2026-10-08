@@ -812,7 +812,7 @@ void register_asset_commands(Registry& r) {
             {"toc", ParamType::Path, "The .toc file to read", true, true},
         },
         .examples = {"game toc-stock \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Skate\\Data\\Win32\\ui.toc\"",
-                     "game toc-stock C:\\dev\\copies\\items.toc --json"},
+                     "game toc-stock C:\\work\\copies\\items.toc --json"},
         .run = [](Context& c, const Json& a) -> Json {
             std::error_code ec;
             // Absolute: the engine runs in the engine folder, so a relative path (possible over MCP) would miss.

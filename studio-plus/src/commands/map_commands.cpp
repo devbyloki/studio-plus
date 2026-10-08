@@ -826,7 +826,7 @@ void register_map_commands(Registry& r) {
             "package arranged that way; it always reads Data\\layout.toc, never Patch\\layout.toc. A file that is "
             "not a Frostbite toc fails with layout_invalid.",
         .params = {game_root_param()},
-        .examples = {"layout info", "layout info --game-root C:\\dev\\fakeroot --json"},
+        .examples = {"layout info", "layout info --game-root C:\\work\\fakeroot --json"},
         .run = [](Context& c, const Json& a) -> Json {
             std::error_code ec;
             fs::path root = c.game_root(a);
