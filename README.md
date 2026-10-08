@@ -120,6 +120,9 @@ every push and runs the tests in `tests\`:
 - `project_export_test.py` and `mod_restore_test.py` need only `studio-plus.exe`;
 - `ride_retarget_test.py` needs `pip install bpy==5.2.2`.
 
+To publish a release, set the version in `CMakeLists.txt`, add its section to `CHANGELOG.md`, then run the **Build**
+workflow on `master` with **release** ticked (or push a `v<version>` tag).
+
 | Folder | |
 |---|---|
 | `src/core` | the command registry, settings, processes, `reskate_cli` |
