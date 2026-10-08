@@ -1,5 +1,6 @@
 # Builds Studio+ with MSVC (/W4 /WX), runs the tests and packages the download on every push. A tag like v0.9.0
-# also publishes that package as a GitHub Release.
+# also publishes that package as a GitHub Release. So does running this workflow by hand on master with "release"
+# ticked: that tags the commit v<the version in CMakeLists.txt>.
 name: Build
 
 on:
@@ -8,6 +9,11 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release:
+        description: Publish this commit as a GitHub Release, tagged v<the version in CMakeLists.txt> (master only)
+        type: boolean
+        default: false
 
 concurrency:
   group: build-${{ github.ref }}
@@ -51,7 +57,7 @@ jobs:
           name: studio-plus-windows
           path: ${{ env.PACKAGE_DIR }}
       - uses: actions/upload-artifact@v4
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' || inputs.release
         with:
           name: release-zip
           path: ${{ env.PACKAGE_ZIP }}
@@ -70,7 +76,7 @@ jobs:
         run: python tests/ride_retarget_test.py
 
   release:
-    if: github.ref_type == 'tag'
+    if: github.ref_type == 'tag' || (inputs.release && github.ref == 'refs/heads/master')
     needs: [windows, blender]
     runs-on: ubuntu-latest
     permissions:
@@ -83,12 +89,19 @@ jobs:
           path: dist
       - name: Release notes from the changelog
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then tag="$GITHUB_REF_NAME"
+          else tag="v$(sed -n 's/^project(ReSkateStudioPlus VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"; fi
+          [ "$tag" != v ] || { echo "No version in CMakeLists.txt"; exit 1; }
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+          version="${tag#v}"
           awk -v v="$version" '$0 ~ "^## "v {on=1; next} /^## / && on {exit} on' CHANGELOG.md > notes.md
           [ -s notes.md ] || echo "ReSkate Studio+ $version" > notes.md
+      # Creates the tag on this commit when it doesn't exist yet.
       - uses: softprops/action-gh-release@v2
         with:
-          name: ReSkate Studio+ ${{ github.ref_name }}
+          tag_name: ${{ env.TAG }}
+          target_commitish: ${{ github.sha }}
+          name: ReSkate Studio+ ${{ env.TAG }}
           body_path: notes.md
           files: dist/*.zip
-          prerelease: ${{ startsWith(github.ref_name, 'v0.') || contains(github.ref_name, '-') }}
+          prerelease: ${{ startsWith(env.TAG, 'v0.') || contains(env.TAG, '-') }}
