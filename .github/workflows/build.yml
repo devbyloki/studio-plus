@@ -1,0 +1,94 @@
+# Builds Studio+ with MSVC (/W4 /WX), runs the tests and packages the download on every push. A tag like v0.9.0
+# also publishes that package as a GitHub Release.
+name: Build
+
+on:
+  push:
+    branches: [master, main, "claude/**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Configure
+        run: cmake --preset release
+      - name: Build
+        run: cmake --build --preset release
+      - name: Smoke test the CLI
+        shell: pwsh
+        run: |
+          $env:RSSP_DATA_DIR = "$env:RUNNER_TEMP\rssp"
+          .\build\release\studio-plus.exe studio version --json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\build\release\studio-plus.exe commands --json | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test project export
+        run: python tests/project_export_test.py build/release/studio-plus.exe
+      - name: Test mod uninstall and restore
+        run: python tests/mod_restore_test.py build/release/studio-plus.exe
+      - name: Package
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME.TrimStart("v") } else { "" }
+          ./scripts/package.ps1 -Version $version
+          $dir = Get-ChildItem dist -Directory | Select-Object -First 1
+          "PACKAGE_DIR=$($dir.FullName)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "PACKAGE_ZIP=$($dir.FullName).zip" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      # The folder as the download (Actions zips it); the same files the release zip holds.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: studio-plus-windows
+          path: ${{ env.PACKAGE_DIR }}
+      - uses: actions/upload-artifact@v4
+        if: github.ref_type == 'tag'
+        with:
+          name: release-zip
+          path: ${{ env.PACKAGE_ZIP }}
+
+  # The Blender scripts, with Blender's Python module (no GPU or window needed).
+  blender:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install Blender's Python module
+        run: pip install bpy==5.2.2
+      - name: Test ride_retarget.py
+        run: python tests/ride_retarget_test.py
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [windows, blender]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-zip
+          path: dist
+      - name: Release notes from the changelog
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '$0 ~ "^## "v {on=1; next} /^## / && on {exit} on' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "ReSkate Studio+ $version" > notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: ReSkate Studio+ ${{ github.ref_name }}
+          body_path: notes.md
+          files: dist/*.zip
+          prerelease: ${{ startsWith(github.ref_name, 'v0.') || contains(github.ref_name, '-') }}

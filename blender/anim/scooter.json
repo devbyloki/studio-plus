@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "name": "Razor scooter",
+  "comment": "Board space, metres: Y up, Z forward along the deck, X to the rider's left, origin on the ground under the deck centre (the space razor_scooter_deck.glb is in). Grips are measured on --model when one is given; the values here are used otherwise.",
+  "lead_foot": "left",
+  "grips": {"left": [0.13, 0.79, 0.24], "right": [-0.13, 0.79, 0.24]},
+  "measure_grips": true,
+  "grip_inset": 0.03,
+  "hand_offset": [0.0, 0.03, 0.0],
+  "deck_top": 0.10,
+  "deck_width": 0.11,
+  "deck_length": 0.46,
+  "front_foot": [0.0, 0.10, 0.08],
+  "back_foot": [0.0, 0.10, -0.14],
+  "ankle_height": 0.08,
+  "skate_deck_top": 0.11,
+  "hips_offset": [0.0, 0.0, -0.08],
+  "push_blend_frames": 4,
+  "arm_chain": 2,
+  "leg_chain": 2,
+  "bones": {}
+}

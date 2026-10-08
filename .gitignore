@@ -1,41 +1,15 @@
-# Build artifacts
-build.log
-cfg.log
-xcopy.log
-out-*.json
-out-anim.json
-*.bundle
-
-# Archives
-*.rar
+# Build outputs
+build/
+out/
+vendor/
 *.zip
 *.7z
+*.rar
 
-# Temp / junk
-null
-
-# IDE / editor
+# Editors and tools
 .vs/
 *.suo
 *.user
-
-# Build outputs (per-component)
-**/build/
-**/out/
-**/vendor/
-**/.claude/
-
-# Test data (large binaries, assets)
-sp-*-tests/
-sp-*review/
-sp-*review-tests/
-
-# Large model files in scooter
-sp-scooter/*.fbx
-sp-scooter/*.glb
-
-# Third party (already has its own gitignore in each component)
-sp-*-src/third_party/
-
-# Submodule .git directories (each sp-*-src is its own repo)
-sp-*/.git/
+.claude/
+__pycache__/
+*.pyc
