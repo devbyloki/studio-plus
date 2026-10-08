@@ -2,6 +2,7 @@
 #include "commands/commands.h"
 #include "core/engine.h"
 #include "core/settings.h"
+#include "native/gltf.h"
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -433,8 +434,90 @@ void check_costume_package(const fs::path& dir) {
 }
 }  // namespace
 
-// mesh find / info / export-raw / replace, in mesh_replace_commands.cpp.
+// mesh find / info / export-raw / replace, in mesh_replace_commands.cpp, and two helpers it shares.
 void register_mesh_replace_commands(Registry& r);
+Json board_part_mesh(Context& c, const Json& a, const std::string& item);
+fs::path model_as_glb(Context& c, const fs::path& model);
+
+namespace {
+
+// A truck item to clone when none is given: from the audit, a generic one if there is one.
+std::string pick_truck_donor(Context& c, const fs::path& root) {
+    c.progress(-1, "looking for a truck item to clone (cosmetic audit, about a minute)");
+    EngineRun run = run_engine(c, {"cosmetic-audit", path_utf8(root)}, engine_stderr, row_progress("audited"));
+    check_run(run, {});
+    std::string first, generic;
+    for (const auto& line : run.out_lines) {
+        const auto f = split(line, '\t');
+        if (f.size() < 4 || f[0] != "OK" || lower(f[2]) != "truck") continue;
+        const std::string item = lower(f[3]);
+        if (first.empty()) first = item;
+        if (generic.empty() && item.find("gen") != std::string::npos && item.find("default") != std::string::npos) generic = item;
+    }
+    if (first.empty())
+        throw Error("donor_not_found", "No truck item in the cosmetic catalog to clone; pass --donor (see: cosmetic audit --slot truck)");
+    return generic.empty() ? first : generic;
+}
+
+// cosmetic new-board-part: the model as a NEW truck item with its own geometry, through the engine's
+// cosmetic-mesh-import. The engine routes each material to the donor mesh's section of the same name and
+// refuses anything else, so a copy of the model with every material named after the donor's main section
+// goes in. Research: docs/discovery/own-board.md.
+Json run_new_board_part(Context& c, const Json& a) {
+    const fs::path root = checked_game_root(c, a);
+    const fs::path model = path_arg(a, "model");
+    const fs::path output = path_arg(a, "output");
+    require_file(model, "model");
+    require_extension(model, "model", {".glb", ".fbx"});
+    require_extension(output, "output", {".fbproject", ".fbmod"});
+    require_output_dir(output, "output");
+    // The engine names the item after the model file: items/<slot>/own_<name>.
+    std::string name = trim(arg_string(a, "name"));
+    if (name.empty()) name = path_utf8(model.stem());
+    const bool name_ok = !name.empty() && name.size() <= 48 && std::all_of(name.begin(), name.end(), [](char ch) {
+        const auto u = static_cast<unsigned char>(ch);
+        return u < 128 && (std::isalnum(u) || ch == ' ' || ch == '_' || ch == '-');
+    });
+    if (!name_ok)
+        throw Error("invalid_name", "--name '" + name + "': use up to 48 ASCII letters, numbers, spaces, _ and -", {{"param", "name"}});
+
+    std::string donor = lower(trim(arg_string(a, "donor")));
+    if (donor.empty()) donor = pick_truck_donor(c, root);
+    if (!starts_with(donor, "items/"))
+        throw Error("invalid_arguments", "--donor must be a catalog item path starting with items/ (see: cosmetic audit --slot truck)",
+                    {{"param", "donor"}});
+    Json part = board_part_mesh(c, a, donor);
+    std::string section = trim(arg_string(a, "section"));
+    if (section.empty()) section = part.value("main_section", "");
+
+    const fs::path work = Settings::data_dir() / L"work" / L"new-board-part";
+    std::error_code ec;
+    fs::create_directories(work, ec);
+    const fs::path glb = model_as_glb(c, model);
+    const fs::path prepared = work / (utf8_to_wide(name) + L".glb");
+    std::vector<std::string> renamed;
+    try {
+        renamed = native::write_glb_one_material(glb, prepared, section);
+    } catch (const std::exception& e) {
+        throw Error("model_unreadable", "--model: " + std::string(e.what()) + ": " + path_utf8(glb), {{"param", "model"}});
+    }
+
+    Json args = {{"donor", donor}, {"model", path_utf8(prepared)}, {"output", path_utf8(output)}};
+    if (a.contains("game-root")) args["game-root"] = a["game-root"];
+    Json out = run_import_mesh(c, args);
+    part["section_used"] = section;
+    part["model_materials"] = renamed;
+    part["prepared_model"] = path_utf8(prepared);
+    out["board_part"] = part;
+    out["slot"] = "truck";
+    out["notes"] = Json::array({
+        "In game, pick the new item in the trucks list: it draws your model where the trucks go. The deck and wheels "
+        "you pick still draw too; only the trucks are replaced.",
+        "Everyone else's boards are unchanged, and players without the mod see the truck you cloned."});
+    return out;
+}
+
+} // namespace
 
 void register_cosmetic_commands(Registry& r) {
     r.add({
@@ -503,6 +586,36 @@ void register_cosmetic_commands(Registry& r) {
                      "cosmetic import-mesh items/cust_fullbodycostume/own_costume_gen_isaacclarke_00001 C:\\mods\\suit.fbx C:\\mods\\suit.fbmod --json"},
         .long_running = true,
         .run = run_import_mesh,
+    });
+
+    r.add({
+        .group = "cosmetic", .name = "new-board-part",
+        .summary = "Make your model its own selectable truck item (e.g. a scooter), leaving every other board as it is",
+        .description =
+            "Clones a truck item into a NEW truck item whose geometry is your .glb/.fbx (the engine's cosmetic-mesh-import, "
+            "which gives the new item its own geometry asset and bundle). Unlike 'mesh replace', which changes a shared mesh "
+            "for every board, only players who pick the new item see it. Truck items are the board parts the game gives "
+            "their own geometry; deck, grip and wheel items share one mesh, so they cannot carry a model of their own.\n\n"
+            "The engine only takes a model whose materials are named after the donor mesh's material sections, so Studio+ "
+            "reads the donor item's geometry (its AssetPaths entry with AssetTypeId 2), finds that mesh, and imports a copy "
+            "of your model with every material named after its main section (or --section). The new item is called "
+            "items/truck/own_<name> (--name, default the model's file name). Model space as for mesh replace: Y up, metres, "
+            "board length along Z, origin on the ground under the board centre. In game, the deck and wheels the player "
+            "picks still draw with it. Without --donor, a generic truck from the catalog is cloned (that runs the cosmetic "
+            "audit, about a minute). Writes --output and a .readback.glb beside it; nothing in the ReSkate folder changes. "
+            "Not yet verified in game: see docs/discovery/own-board.md.",
+        .params = {
+            {"model", ParamType::Path, "Your model: .glb, or .fbx (needs Blender)", true, true},
+            {"output", ParamType::Path, "File to write: .fbmod (to build and install) or .fbproject", true, true},
+            {"name", ParamType::String, "Name of the new item (ASCII letters, numbers, spaces, _ and -). Default: the model's file name"},
+            {"donor", ParamType::String, "Truck item to clone, e.g. from 'cosmetic audit --slot truck'. Default: a generic truck"},
+            {"section", ParamType::String, "Material section to name every material after. Default: the donor mesh's main section"},
+            game_root_param(),
+        },
+        .examples = {"cosmetic new-board-part razor_scooter_deck.glb C:\\mods\\Razor_Scooter_Item.fbmod --name \"Razor Scooter\"",
+                     "cosmetic new-board-part scooter.glb scooter.fbmod --donor <truck item from cosmetic audit> --json"},
+        .long_running = true,
+        .run = run_new_board_part,
     });
 
     r.add({

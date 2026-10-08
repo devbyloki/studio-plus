@@ -28,4 +28,11 @@ struct GltfModel {
 // Throws std::runtime_error with a readable message on anything it cannot read.
 GltfModel load_glb(const std::filesystem::path& path);
 
+// Copies the .glb at `from` to `to` with one material called `name` on every primitive, and every mesh and mesh
+// node named `name` too, so an importer that routes by material name puts all of it in one section. The geometry
+// is not touched (textures are dropped with the materials). Returns the material names it replaced. Throws
+// std::runtime_error like load_glb.
+std::vector<std::string> write_glb_one_material(const std::filesystem::path& from, const std::filesystem::path& to,
+                                                const std::string& name);
+
 } // namespace studio::native

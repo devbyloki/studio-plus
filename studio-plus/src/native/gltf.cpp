@@ -248,4 +248,57 @@ GltfModel load_glb(const std::filesystem::path& path) {
     return model;
 }
 
+std::vector<std::string> write_glb_one_material(const std::filesystem::path& from, const std::filesystem::path& to,
+                                                const std::string& name) {
+    std::ifstream in(from, std::ios::binary);
+    if (!in) throw std::runtime_error("cannot open the model file");
+    std::vector<unsigned char> file((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    auto u32 = [&](size_t at) {
+        std::uint32_t v = 0;
+        if (at + 4 <= file.size()) std::memcpy(&v, file.data() + at, 4);
+        return v;
+    };
+    if (file.size() < 20 || u32(0) != 0x46546C67) throw std::runtime_error("not a binary glTF (.glb) file");
+    const std::uint32_t json_len = u32(12);
+    if (u32(16) != 0x4E4F534A || 20ull + json_len > file.size()) throw std::runtime_error("the .glb has no JSON chunk");
+    Json doc = Json::parse(file.begin() + 20, file.begin() + 20 + json_len);
+
+    // One material for everything: several materials with the same name read back as Name, Name.001, ...
+    std::vector<std::string> replaced;
+    if (doc.contains("materials") && doc["materials"].is_array())
+        for (const auto& m : doc["materials"]) replaced.push_back(m.is_object() ? m.value("name", std::string()) : std::string());
+    doc["materials"] = Json::array({{{"name", name}}});
+    if (!doc["meshes"].is_array()) doc["meshes"] = Json::array();
+    for (auto& mesh : doc["meshes"]) {
+        mesh["name"] = name;
+        for (auto& p : mesh["primitives"]) p["material"] = 0;
+    }
+    if (doc.contains("nodes"))
+        for (auto& node : doc["nodes"])
+            if (node.contains("mesh")) node["name"] = name;
+
+    // The JSON chunk is padded with spaces to 4 bytes; the binary chunk after it is kept as it is.
+    std::string text = doc.dump();
+    while (text.size() % 4) text.push_back(' ');
+    const size_t rest_at = 20 + json_len;
+    std::vector<unsigned char> out;
+    auto put = [&](std::uint32_t v) {
+        unsigned char b[4];
+        std::memcpy(b, &v, 4);
+        out.insert(out.end(), b, b + 4);
+    };
+    put(0x46546C67);
+    put(2);
+    put(static_cast<std::uint32_t>(12 + 8 + text.size() + (file.size() - rest_at)));
+    put(static_cast<std::uint32_t>(text.size()));
+    put(0x4E4F534A);
+    out.insert(out.end(), text.begin(), text.end());
+    out.insert(out.end(), file.begin() + static_cast<std::ptrdiff_t>(rest_at), file.end());
+    std::ofstream o(to, std::ios::binary | std::ios::trunc);
+    if (!o) throw std::runtime_error("cannot write the model copy");
+    o.write(reinterpret_cast<const char*>(out.data()), static_cast<std::streamsize>(out.size()));
+    if (!o) throw std::runtime_error("writing the model copy failed");
+    return replaced;
+}
+
 } // namespace studio::native

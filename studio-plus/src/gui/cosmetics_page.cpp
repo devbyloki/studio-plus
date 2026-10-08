@@ -27,7 +27,7 @@ constexpr const char* truck_mesh = "characters/skateboard/unlicensed/truck/gener
 constexpr const char* wheel_mesh = "characters/skateboard/unlicensed/wheel/generic/classic/2022/wheel_gen_classic_mesh";
 constexpr const char* preview_mesh = "characters/skateboard/static/static_skateboard_mesh";
 
-enum class View { browse, make, replace, costume };
+enum class View { browse, make, part, replace, costume };
 
 struct Item {
     std::string item, slot, status, texture, reason;
@@ -55,6 +55,11 @@ struct CosmeticsState {
     std::string donor, make_model, make_output;
     bool make_output_edited = false;
     std::shared_ptr<Job> make;
+
+    // a model as its own truck item (cosmetic new-board-part)
+    std::string part_model, part_name, part_donor, part_output;
+    bool part_output_edited = false;
+    std::shared_ptr<Job> part;
 
     // replace a game mesh
     std::string mesh = deck_mesh, model, output, find, routes, title, author, more_hidden;
@@ -170,6 +175,7 @@ void start() {
     const Json& a = s.startup;
     const std::string view = a.value("view", "");
     if (view == "new") s.view = View::make;
+    else if (view == "part") s.view = View::part;
     else if (view == "replace") s.view = View::replace;
     else if (view == "costume") s.view = View::costume;
     s.filter_text = a.value("text", "");
@@ -194,7 +200,7 @@ void start() {
 // ------------------------------------------------------------------ the view switch
 void tabs() {
     auto& s = g_cos;
-    const std::pair<View, const char*> list[]{{View::browse, "BROWSE"}, {View::make, "NEW COSMETIC"},
+    const std::pair<View, const char*> list[]{{View::browse, "BROWSE"}, {View::make, "NEW COSMETIC"}, {View::part, "OWN BOARD ITEM"},
                                               {View::replace, "REPLACE A GAME MESH"}, {View::costume, "NATIVE COSTUME"}};
     for (const auto& [view, label] : list) {
         if (view != View::browse) ImGui::SameLine(0, S(6));
@@ -331,6 +337,15 @@ void browse_view() {
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Decks, grips and wheels share one mesh per part, and most trucks share one too: replacing it "
                                   "changes it on every board. Licensed trucks have their own mesh, which is picked when found.");
+            if (kit::lower(sel->slot) == "truck") {
+                ImGui::SameLine();
+                if (primary_button("CLONE AS MY OWN ITEM")) {
+                    s.part_donor = sel->item;
+                    s.view = View::part;
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("A new truck item with your model, cloned from this one. Only players who pick it see it.");
+            }
         } else if (primary_button("USE AS DONOR")) {
             s.donor = sel->item;
             s.view = View::make;
@@ -371,6 +386,62 @@ void make_view(App& app) {
         field("NEW ITEM", r.value("item", ""));
         field("SAVED", r.value("output", "") + "  (" + kit::thousands(r.value("output_bytes", 0LL)) + " bytes)");
         if (r.contains("readback")) field("CHECK IN BLENDER", r["readback"].value("path", ""));
+    }
+    end_tile();
+}
+
+// ------------------------------------------------------------------ a model as its own truck item
+void part_view(App& app) {
+    auto& s = g_cos;
+    begin_tile("##cos_part", 75);
+    kit::tile_title("YOUR MODEL AS ITS OWN BOARD ITEM");
+    kit::muted("Makes a NEW truck item that draws your model, such as a scooter. Only players who pick it see it: every "
+               "other board stays as it is, unlike REPLACE A GAME MESH, which changes a part on every board. Trucks are "
+               "the board part the game lets an item give its own geometry, so the item goes in the trucks list, and the "
+               "deck and wheels picked with it still draw. The model must be in board space: Y up, metres, board length "
+               "along Z, origin on the ground under the board centre.");
+    kit::caption("YOUR MODEL (.glb, or .fbx with Blender)");
+    if (path_field("##part_model", s.part_model, app.window, false, {{L"Models (*.glb;*.fbx)", L"*.glb;*.fbx"}}, S(110))) {
+        if (s.part_name.empty()) s.part_name = path_utf8(fs::path(utf8_to_wide(s.part_model)).stem());
+        if (!s.part_output_edited) s.part_output = default_output(s.part_name.empty() ? s.part_model : s.part_name + ".glb", ".fbmod");
+    }
+    if (ImGui::BeginTable("##part_meta", 2, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthStretch, 1);
+        ImGui::TableSetupColumn("donor", ImGuiTableColumnFlags_WidthStretch, 2);
+        ImGui::TableNextColumn();
+        kit::caption("ITEM NAME");
+        ImGui::SetNextItemWidth(-1);
+        input_text("##part_name", s.part_name, 0, "Razor Scooter");
+        ImGui::TableNextColumn();
+        kit::caption("TRUCK TO CLONE (optional: pick one in BROWSE)");
+        ImGui::SetNextItemWidth(-1);
+        input_text("##part_donor", s.part_donor, 0, "Empty: a generic truck (finding one takes about a minute)");
+        ImGui::EndTable();
+    }
+    kit::caption("SAVE AS (.fbmod to build and install, or .fbproject)");
+    if (path_field("##part_output", s.part_output, app.window, false, {{L"Frosty mod (*.fbmod)", L"*.fbmod"}, {L"Project (*.fbproject)", L"*.fbproject"}}, S(110)))
+        s.part_output_edited = true;
+    const bool ready = !s.part_model.empty() && !s.part_output.empty();
+    ImGui::BeginDisabled(!ready || kit::running(s.part));
+    if (primary_button("MAKE THE ITEM"))
+        s.part = kit::run("cosmetic", "new-board-part",
+                          {{"model", s.part_model}, {"output", s.part_output}, {"name", s.part_name}, {"donor", s.part_donor}});
+    ImGui::EndDisabled();
+    if (!ready) { ImGui::SameLine(); ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("Needs a model and a file to save"); }
+    kit::status(s.part, "Made");
+    const Json r = kit::result(s.part);
+    if (r.is_object()) {
+        field("NEW ITEM", r.value("item", ""));
+        field("SAVED", r.value("output", "") + "  (" + kit::thousands(r.value("output_bytes", 0LL)) + " bytes)");
+        const Json part = r.value("board_part", Json::object());
+        field("CLONED FROM", part.value("donor", "") + "  (mesh " + kit::leaf(part.value("mesh", "")) + ")");
+        field("MATERIALS NAMED", part.value("section_used", ""));
+        if (r.contains("readback")) field("CHECK IN BLENDER", r["readback"].value("path", ""));
+        for (const auto& note : r.value("notes", Json::array())) kit::muted(note.get<std::string>());
+        if (ImGui::Button("OPEN FOLDER"))
+            ShellExecuteW(nullptr, L"open", fs::path(utf8_to_wide(r.value("output", ""))).parent_path().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        ImGui::SameLine();
+        if (ImGui::Button("BUILD AND INSTALL IN PROJECT & MODS")) build_in_project(app, r.value("output", ""));
     }
     end_tile();
 }
@@ -617,6 +688,7 @@ void cosmetics_page(App& app) {
     switch (g_cos.view) {
     case View::browse: browse_view(); break;
     case View::make: make_view(app); break;
+    case View::part: part_view(app); break;
     case View::replace: replace_view(app); break;
     case View::costume: costume_view(app); break;
     }

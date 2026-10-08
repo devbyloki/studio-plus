@@ -11,7 +11,7 @@ struct App;
 void cosmetics_page(App& app);
 
 // Startup options for scripts and screenshots, given with --page cosmetics:
-//   --arg view=browse|new|replace|costume  --arg text=<filter>  --arg slot=<slot>
+//   --arg view=browse|new|part|replace|costume  --arg text=<filter>  --arg slot=<slot>
 //   --arg mesh=<game mesh>  --arg model=<.glb|.fbx>  --arg output=<.fbproject|.fbmod>  --arg hide=deck-parts
 //   --arg rigid=true  --arg donor=<item>  --arg select=<item>  --arg show=model|result (scrolls there)
 //   --run loads the catalog (audit) on browse, reads the mesh on replace and, with a model, replaces it.

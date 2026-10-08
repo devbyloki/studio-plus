@@ -1,6 +1,7 @@
 // Native mesh commands that do not go through reskate_cli: mesh find, mesh info, mesh export-raw and mesh
 // replace. They read the game with the ReSkate readers in src/native and write ReSkate Studio .fbproject /
-// Frosty .fbmod files themselves. Registered from cosmetic_commands.cpp.
+// Frosty .fbmod files themselves. Registered from cosmetic_commands.cpp, which also uses board_part_mesh and
+// model_as_glb for cosmetic new-board-part.
 #include "commands/commands.h"
 #include "core/engine.h"
 #include "core/settings.h"
@@ -9,6 +10,7 @@
 #include "native/gltf.h"
 #include "native/mesh_set.h"
 #include "native/mod_files.h"
+#include "Engine/Resource/ebx_document.h"
 
 #include <algorithm>
 #include <array>
@@ -16,6 +18,9 @@
 #include <map>
 #include <filesystem>
 #include <fstream>
+#include <cwctype>
+#include <optional>
+#include <variant>
 
 namespace fs = std::filesystem;
 
@@ -432,6 +437,86 @@ Json run_mesh_replace(Context& c, const Json& a) {
     return out;
 }
 } // namespace
+
+namespace {
+namespace ebx = dingosdk::frostbite::ebx;
+
+std::string lower_ascii(std::string text) {
+    for (auto& ch : text) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    return text;
+}
+
+std::optional<long long> integer_of(const ebx::Value& v) {
+    if (const auto* i = std::get_if<std::int64_t>(&v.data)) return *i;
+    if (const auto* u = std::get_if<std::uint64_t>(&v.data)) return static_cast<long long>(*u);
+    return std::nullopt;
+}
+
+// Every AssetPaths entry with AssetTypeId 2 (the item's own geometry, e.g. Truck_Royal_TheRoyal), anywhere in
+// the object tree: the entry's string field is the geometry name.
+void geometry_names(const ebx::Value& v, bool in_asset_paths, std::vector<std::string>& out) {
+    if (const auto* list = std::get_if<ebx::Value::Array>(&v.data)) {
+        for (const auto& item : *list) geometry_names(item, in_asset_paths, out);
+        return;
+    }
+    const auto* object = std::get_if<std::shared_ptr<ebx::Object>>(&v.data);
+    if (!object || !*object) return;
+    if (in_asset_paths) {
+        std::optional<long long> type;
+        std::string name;
+        for (const auto& f : (*object)->fields) {
+            if (lower_ascii(f.name) == "assettypeid") type = integer_of(f.value);
+            else if (const auto* text = std::get_if<std::string>(&f.value.data); text && name.empty() && !text->empty()) name = *text;
+        }
+        if (type == 2 && !name.empty() && std::find(out.begin(), out.end(), name) == out.end()) out.push_back(name);
+    }
+    for (const auto& f : (*object)->fields) geometry_names(f.value, lower_ascii(f.name) == "assetpaths", out);
+}
+} // namespace
+
+// The mesh a board-part item draws: its geometry names from the item's EBX, the MeshSet named after the
+// first, and that mesh's sections. Throws Error("donor_not_found" / "donor_has_no_geometry" / "donor_mesh_not_found").
+Json board_part_mesh(Context& c, const Json& a, const std::string& item) {
+    auto game = open_game(c, a);
+    c.progress(-1, "reading " + item);
+    const auto found = game.find(fb::AssetKind::ebx, item);
+    if (!found) throw Error("donor_not_found", "No item called " + item + " in the game; see 'cosmetic audit'", {{"donor", item}});
+    std::vector<std::string> geometry;
+    try {
+        const auto doc = ebx::read_document(found->bytes);
+        for (const auto& instance : doc.instances)
+            if (instance.object) geometry_names(ebx::Value{instance.object}, false, geometry);
+    } catch (const std::exception& e) {
+        throw Error("donor_unreadable", "Cannot read the EBX of " + item + ": " + e.what(), {{"donor", item}});
+    }
+    if (geometry.empty())
+        throw Error("donor_has_no_geometry",
+                    item + " has no geometry of its own (no AssetPaths entry with AssetTypeId 2). Deck, grip and wheel items "
+                    "share one mesh per part; pick a truck item.", {{"donor", item}});
+    const std::string want = lower_ascii(geometry.front());
+    std::string mesh;
+    for (const auto& [name, type] : game.find_resources(want, mesh_set_type, 0)) {
+        const std::string leaf = lower_ascii(name.substr(name.find_last_of('/') + 1));
+        if (leaf == want + "_mesh") { mesh = name; break; }
+        if (mesh.empty() && leaf.starts_with(want)) mesh = name;
+    }
+    if (mesh.empty())
+        throw Error("donor_mesh_not_found", "No mesh named after " + geometry.front() + " (the geometry of " + item + ")",
+                    {{"donor", item}, {"geometry", geometry}});
+    c.progress(-1, "reading " + mesh);
+    const GameMesh m = read_mesh(game, mesh);
+    Json sections = Json::array();
+    for (const auto& sec : m.mesh.lods.front().sections)
+        sections.push_back({{"section", sec.name}, {"vertices", sec.vertices}, {"triangles", sec.triangles}, {"shadow", is_shadow(sec)}});
+    return {{"donor", item}, {"geometry", geometry}, {"mesh", m.name}, {"sections", sections}, {"main_section", main_section(m.mesh)}};
+}
+
+// `model` as a .glb: a .glb as it is, an .fbx converted with Blender into the data folder.
+std::filesystem::path model_as_glb(Context& c, const std::filesystem::path& model) {
+    std::wstring ext = model.extension().native();
+    for (auto& ch : ext) ch = static_cast<wchar_t>(std::towlower(ch));
+    return ext == L".fbx" ? fbx_to_glb(c, model) : model;
+}
 
 static Json run_mesh_find(Context& c, const Json& a) {
     const std::string text = arg_string(a, "text");
