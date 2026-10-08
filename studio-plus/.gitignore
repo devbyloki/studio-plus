@@ -4,3 +4,5 @@
 *.user
 .vs/
 /.claude/
+__pycache__/
+*.pyc
