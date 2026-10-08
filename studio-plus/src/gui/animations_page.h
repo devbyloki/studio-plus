@@ -11,7 +11,7 @@ void animations_page(App& app);
 
 // Startup options for scripts and screenshots, given with --page animations:
 //   --arg find=<text>  --arg clip=<clip>  --arg fbx=<file>  --arg output=<.fbproject|.fbmod>
-//   --arg show=find|info|export|import scrolls to that step
+//   --arg show=find|info|export|import|ride scrolls to that step
 //   --run searches for `find`, reads `clip` and, with fbx, lists its takes.
 void animations_startup(const Json& args, bool run);
 

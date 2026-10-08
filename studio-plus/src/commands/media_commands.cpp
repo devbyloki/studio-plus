@@ -182,6 +182,129 @@ Param project_param(const std::string& help) {
 }
 }
 
+namespace {
+
+// Runs another registry command with its defaults filled in; its errors pass straight through. `from` passes
+// on the caller's --game-root when it has one.
+Json call(Context& c, const char* group, const char* name, Json args, const Json& from) {
+    const Command* command = Registry::instance().find(group, name);
+    if (!command) throw Error("internal_error", std::string("Missing command ") + group + " " + name);
+    if (from.contains("game-root") && from["game-root"].is_string()) args["game-root"] = from["game-root"];
+    return command->run(c, normalise_args(*command, args));
+}
+
+// blender\anim\ride_retarget.py beside the executables (copied there by the build).
+fs::path ride_script() {
+    const fs::path script = executable_dir() / L"blender" / L"anim" / L"ride_retarget.py";
+    std::error_code ec;
+    if (!fs::is_regular_file(script, ec))
+        throw Error("ride_script_missing", "blender\\anim\\ride_retarget.py is missing beside studio-plus.exe; reinstall Studio+ with its blender folder",
+                    {{"path", path_utf8(script)}});
+    return script;
+}
+
+// One clip through ride_retarget.py in Blender. Returns its RESKATE_RIDE_RESULT; throws its error.
+Json run_ride_script(Context& c, const fs::path& blender, const std::vector<std::string>& script_args) {
+    ProcessOptions po;
+    po.executable = blender;
+    po.args = {"--background", "--factory-startup", "--python", path_utf8(ride_script()), "--"};
+    po.args.insert(po.args.end(), script_args.begin(), script_args.end());
+    po.working_dir = Settings::data_dir();
+    po.cancel = c.cancel;
+    Json result;
+    std::string last_error;
+    po.on_stdout_line = [&](std::string_view line) {
+        if (line.starts_with("RESKATE_RIDE_PROGRESS=")) {
+            const Json p = Json::parse(line.substr(22), nullptr, false);
+            if (p.is_object() && p.contains("message") && p["message"].is_string()) c.progress(-1, p["message"].get<std::string>());
+        } else if (line.starts_with("RESKATE_RIDE_RESULT=")) {
+            result = Json::parse(line.substr(20), nullptr, false);
+        }
+    };
+    po.on_stderr_line = [&](std::string_view line) { if (!line.empty()) last_error.assign(line); };
+    const ProcessResult r = run_process(po);
+    if (r.cancelled) throw Error("cancelled", "Cancelled");
+    if (!result.is_object())
+        throw Error("ride_failed", "Blender exited with code " + std::to_string(r.exit_code) + " without a result" +
+                    (last_error.empty() ? std::string() : ": " + last_error), {{"exit_code", r.exit_code}});
+    if (result.value("status", "") == "failed") {
+        Json details = result;
+        details.erase("status");
+        throw Error(result.value("error_code", std::string("ride_failed")), result.value("error", std::string("ride_retarget.py failed")), details);
+    }
+    return result;
+}
+
+Json run_retarget_ride(Context& c, const Json& a) {
+    const fs::path output = path_arg(a, "output");
+    const std::string ext = lower_ext(output);
+    if (ext != ".fbmod" && ext != ".fbproject")
+        throw Error("invalid_arguments", "--output must end in .fbmod or .fbproject", {{"param", "output"}});
+    const bool passthrough = a.value("passthrough", false);
+    fs::path targets = arg_string(a, "targets").empty() ? executable_dir() / L"blender" / L"anim" / L"scooter.json" : path_arg(a, "targets");
+    std::error_code ec;
+    if (!passthrough && !fs::is_regular_file(targets, ec))
+        throw Error("targets_not_found", "Targets JSON not found: " + path_utf8(targets), {{"param", "targets"}});
+    fs::path blender = arg_string(a, "blender").empty() ? c.settings.blender : path_arg(a, "blender");
+    if (blender.empty()) blender = detect_blender();
+    if (blender.empty() || !fs::is_regular_file(blender, ec))
+        throw Error("blender_missing", "Re-posing clips needs Blender. Set it with: studio-plus studio set blender <blender.exe>");
+    ride_script();
+
+    const fs::path work = Settings::data_dir() / L"work" / L"ride";
+    fs::create_directories(work, ec);
+    const Json clips = a["clips"];
+    Json done = Json::array();
+    std::string project = arg_string(a, "project");
+    if (!project.empty()) project = path_utf8(path_arg(a, "project"));
+    for (std::size_t i = 0; i < clips.size(); ++i) {
+        const std::string clip = clips[i].get<std::string>();
+        const std::string leaf = clip.substr(clip.find_last_of('/') + 1);
+        const fs::path exported = work / utf8_to_wide(leaf + ".fbx");
+        const fs::path posed = work / utf8_to_wide(leaf + (passthrough ? "_same.fbx" : "_ride.fbx"));
+        c.progress(static_cast<double>(i) / static_cast<double>(clips.size()), "Exporting " + leaf);
+        call(c, "anim", "export", {{"clip", clip}, {"output", path_utf8(exported)}}, a);
+        std::vector<std::string> args = {"--input", path_utf8(exported), "--output", path_utf8(posed)};
+        if (passthrough) {
+            args.push_back("--passthrough");
+        } else {
+            args.insert(args.end(), {"--targets", path_utf8(targets)});
+            if (!arg_string(a, "model").empty()) args.insert(args.end(), {"--model", path_utf8(path_arg(a, "model"))});
+            if (!arg_string(a, "lead-foot").empty()) args.insert(args.end(), {"--lead-foot", arg_string(a, "lead-foot")});
+            if (!arg_string(a, "preview-dir").empty())
+                args.insert(args.end(), {"--preview", path_utf8(path_arg(a, "preview-dir") / utf8_to_wide(leaf))});
+        }
+        c.progress(-1, (passthrough ? "Passing " : "Re-posing ") + leaf + " in Blender");
+        Json ride = run_ride_script(c, blender, args);
+        const fs::path step = work / utf8_to_wide("step" + std::to_string(i + 1) + ".fbproject");
+        c.progress(-1, "Importing " + leaf);
+        Json import_args = {{"clip", clip}, {"input", path_utf8(posed)}, {"output", path_utf8(step)}};
+        if (!project.empty()) import_args["project"] = project;
+        call(c, "anim", "import", import_args, a);
+        project = path_utf8(step);
+        Json row = {{"clip", clip}, {"exported_fbx", path_utf8(exported)}, {"ride_fbx", path_utf8(posed)}};
+        for (const char* key : {"hips_turned_degrees", "lean_degrees", "hips_drop_m", "push_frames", "frames", "front_foot",
+                                "worst_miss_m", "grips", "bones", "pole_angles", "previews", "warnings"})
+            if (ride.contains(key)) row[key] = ride[key];
+        done.push_back(row);
+    }
+
+    c.progress(-1, "Writing " + path_utf8(output.filename()));
+    if (ext == ".fbmod") {
+        const std::string title = arg_string(a, "title");
+        call(c, "project", "export", {{"file", project}, {"output", path_utf8(output)},
+                                     {"title", !title.empty() ? title : passthrough ? "Clips unchanged (round-trip test)" : "Ride animations"}}, a);
+    } else {
+        fs::copy_file(utf8_to_wide(project), output, fs::copy_options::overwrite_existing, ec);
+        if (ec) throw Error("write_failed", "Cannot write " + path_utf8(output) + ": " + ec.message(), {{"param", "output"}});
+    }
+    return {{"output", path_utf8(output)}, {"format", ext.substr(1)}, {"passthrough", passthrough},
+            {"targets", passthrough ? Json(nullptr) : Json(path_utf8(targets))}, {"clips", done},
+            {"output_bytes", static_cast<std::uint64_t>(fs::file_size(output, ec))}};
+}
+
+} // namespace
+
 void register_media_commands(Registry& r) {
     // ---------------------------------------------------------------- audio
     r.add({
@@ -500,6 +623,42 @@ void register_media_commands(Registry& r) {
             return {{"file", path_utf8(file)}, {"joints", field(kv, "joints")}, {"take_count", field(kv, "takes")},
                     {"takes", takes}};
         },
+    });
+
+    r.add({
+        .group = "anim", .name = "retarget-ride",
+        .summary = "Re-pose on-board clips for another ride (a scooter: facing forward, hands on the grips) into one mod",
+        .description =
+            "For each clip: exports it from the game (anim export), re-poses it in Blender with "
+            "blender\\anim\\ride_retarget.py and the targets JSON, and imports it back (anim import), all into one "
+            "--output (.fbmod to build and install, or .fbproject). The re-pose turns the rider's hips to face along the "
+            "board, leans and crouches just enough to reach, puts both hands on the grips with IK (grips measured on "
+            "--model, else from the targets), stands the front foot on the deck, and keeps the clip's own push motion "
+            "for the back foot while it is off the board; timing, root motion, spine and head motion are kept. Knees "
+            "bend forward and elbows out. The targets default to blender\\anim\\scooter.json (Razor scooter).\n\n"
+            "--passthrough skips the re-pose: the clips go through Blender unchanged, a test that the round trip itself "
+            "changes nothing in game. Replacing a clip changes it for every rider on the screen of whoever has the mod, "
+            "skateboarders too, so in multiplayer use the scooter item (cosmetic new-board-part) on its own. "
+            "Bone names are found by common names; if the game's are not, list them with ride_retarget.py --list-bones "
+            "and name them under \"bones\" in the targets JSON. Find clips with: studio-plus asset find onb. Needs "
+            "Blender and the game. Not yet verified in game: see docs/discovery/scooter-anim.md.",
+        .params = {
+            {"clips", ParamType::List, "Clip assets to re-pose, e.g. animation/dingo/c_proto_onb_push_regular_medium_full_static", true, true},
+            {"output", ParamType::Path, "File to write: .fbmod (to build and install) or .fbproject", true},
+            {"targets", ParamType::Path, "Targets JSON (default: blender\\anim\\scooter.json beside studio-plus.exe)"},
+            {"model", ParamType::Path, "The ride's model (.glb/.fbx): grips are measured on it, and it shows in previews"},
+            {"preview-dir", ParamType::Path, "Folder for preview images, one subfolder per clip (renders take a while)"},
+            {"lead-foot", ParamType::Enum, "Front foot (default: the targets', else left; regular stance is left)", false, false, {"left", "right"}},
+            {"passthrough", ParamType::Boolean, "Do not re-pose: export, pass through Blender and import unchanged (a round-trip test mod)", false, false, {}, Json(false)},
+            {"project", ParamType::Path, "A .fbproject to add the clips to"},
+            {"title", ParamType::String, "Mod title for an .fbmod output"},
+            {"blender", ParamType::Path, "blender.exe (default: the saved setting, then auto-detection)"},
+            game_root_param(),
+        },
+        .examples = {"anim retarget-ride animation/dingo/c_proto_onb_push_regular_medium_full_static --output C:\\mods\\scooter_stance.fbmod --model razor_scooter_deck.glb",
+                     "anim retarget-ride animation/dingo/c_proto_onb_push_regular_medium_full_static --output C:\\mods\\roundtrip.fbmod --passthrough"},
+        .long_running = true,
+        .run = run_retarget_ride,
     });
 }
 }

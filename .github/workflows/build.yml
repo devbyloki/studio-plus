@@ -46,3 +46,22 @@ jobs:
           path: |
             studio-plus/build/release/studio-plus.exe
             studio-plus/build/release/ReSkate Studio+.exe
+            studio-plus/build/release/blender/
+            studio-plus/README.md
+            studio-plus/TESTING.md
+
+  # The Blender scripts, with Blender's Python module (no GPU or window needed).
+  blender:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: studio-plus
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install Blender's Python module
+        run: pip install bpy==5.2.2
+      - name: Test ride_retarget.py
+        run: python tests/ride_retarget_test.py

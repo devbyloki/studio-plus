@@ -29,6 +29,12 @@ struct AnimState {
     bool startup_run = false, started = false;
     std::string show;  // startup option: a step to scroll to
     int show_frames = 0;
+
+    // 5. ride animations (anim retarget-ride)
+    std::vector<std::string> ride_clips;
+    std::string ride_model, ride_output, ride_previews;
+    bool ride_passthrough = false, ride_preview = false, ride_output_edited = false;
+    std::shared_ptr<Job> ride;
 };
 AnimState g_anim;
 
@@ -131,6 +137,13 @@ void find_tile(App& app) {
                 ImGui::PopID();
             }
         ImGui::EndChild();
+    }
+    if (!s.clip.empty()) {
+        const bool listed = std::find(s.ride_clips.begin(), s.ride_clips.end(), s.clip) != s.ride_clips.end();
+        ImGui::BeginDisabled(listed);
+        if (ImGui::Button(listed ? "IN THE RIDE LIST" : "ADD TO THE RIDE LIST")) s.ride_clips.push_back(s.clip);
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Step 5 re-poses every clip in the list for a scooter (or another ride)");
     }
     (void)app;
     end_tile();
@@ -259,6 +272,79 @@ void import_tile(App& app) {
     }
     end_tile();
 }
+
+// ------------------------------------------------------------------ 5. ride animations
+void ride_tile(App& app) {
+    auto& s = g_anim;
+    kit::scroll_here(s.show, s.show_frames, "ride");
+    begin_tile("##anim_ride", 65);
+    kit::step_title(5, "RIDE ANIMATIONS (SCOOTER)");
+    kit::muted("Re-poses on-board clips for a scooter: the rider faces forward along the board with both hands on the grips, "
+               "the front foot on the deck and the back foot pushing as in the original clip. All the clips go into one mod. "
+               "Replacing a clip changes it for EVERY rider you see while the mod is installed, skateboarders too, so it "
+               "suits riding on your own; for multiplayer, use the scooter item (COSMETICS > OWN BOARD ITEM) alone. "
+               "Try SAME CLIPS first: it passes the clips through unchanged, to check in game that the round trip itself "
+               "changes nothing.");
+    kit::caption("CLIPS (add them in step 1)");
+    int remove = -1;
+    for (size_t i = 0; i < s.ride_clips.size(); ++i) {
+        ImGui::PushID(static_cast<int>(i));
+        if (ImGui::SmallButton("REMOVE")) remove = static_cast<int>(i);
+        ImGui::SameLine();
+        ImGui::TextUnformatted(s.ride_clips[i].c_str());
+        ImGui::PopID();
+    }
+    if (remove >= 0) s.ride_clips.erase(s.ride_clips.begin() + remove);
+    if (s.ride_clips.empty()) kit::muted("No clips yet. Find on-board clips in step 1 (try \"onb\" or \"push\") and ADD TO THE RIDE LIST.");
+    kit::caption("THE SCOOTER MODEL (optional: the grips are measured on it; else blender\\anim\\scooter.json's)");
+    path_field("##ride_model", s.ride_model, app.window, false, {{L"Models (*.glb;*.fbx)", L"*.glb;*.fbx"}}, S(110));
+    if (s.ride_output.empty()) s.ride_output = kit::data_path(L"Animations", "scooter_stance.fbmod");
+    kit::caption("SAVE AS (.fbmod to build and install, or .fbproject)");
+    if (path_field("##ride_output", s.ride_output, app.window, false, {{L"Frosty mod (*.fbmod)", L"*.fbmod"}, {L"Project (*.fbproject)", L"*.fbproject"}}, S(110)))
+        s.ride_output_edited = true;
+    toggle("##ride_same", &s.ride_passthrough);
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Same clips (round-trip test, no re-pose)");
+    ImGui::SameLine(0, S(24));
+    toggle("##ride_preview", &s.ride_preview);
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Preview pictures");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Renders the start, middle and end of each clip from the side and the front (slower)");
+    const bool ready = !s.ride_clips.empty() && !s.ride_output.empty();
+    ImGui::BeginDisabled(!ready || kit::running(s.ride));
+    if (primary_button(s.ride_passthrough ? "MAKE THE TEST MOD" : "MAKE THE RIDE MOD")) {
+        Json args = {{"clips", s.ride_clips}, {"output", s.ride_output}, {"model", s.ride_model}};
+        if (s.ride_passthrough) args["passthrough"] = true;
+        if (s.ride_preview && !s.ride_passthrough) args["preview-dir"] = kit::data_path(L"Animations", "previews");
+        s.ride = kit::run("anim", "retarget-ride", args);
+    }
+    ImGui::EndDisabled();
+    if (!ready) { ImGui::SameLine(); ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("Needs at least one clip"); }
+    kit::status(s.ride, "Made");
+    const Json r = kit::result(s.ride);
+    if (r.is_object()) {
+        field("SAVED", r.value("output", ""));
+        for (const auto& c : r.value("clips", Json::array())) {
+            ImGui::Bullet();
+            std::string line = kit::leaf(c.value("clip", ""));
+            if (c.contains("hips_turned_degrees"))
+                line += ": turned " + std::to_string(kit::number(c, "hips_turned_degrees", 0)) + " deg, leaning " +
+                        std::to_string(kit::number(c, "lean_degrees", 0)) + " deg, " + std::to_string(kit::number(c, "push_frames", 0)) +
+                        " push frames";
+            ImGui::TextUnformatted(line.c_str());
+            for (const auto& w : c.value("warnings", Json::array())) kit::coloured(w.get<std::string>(), color::warning);
+            const Json previews = c.value("previews", Json::array());
+            if (!previews.empty() && ImGui::SmallButton(("OPEN PREVIEWS##" + c.value("clip", "")).c_str()))
+                ShellExecuteW(nullptr, L"open", fs::path(utf8_to_wide(previews[0].get<std::string>())).parent_path().c_str(),
+                              nullptr, nullptr, SW_SHOWNORMAL);
+        }
+        if (ImGui::Button("BUILD AND INSTALL IN PROJECT & MODS")) build_in_project(app, r.value("output", ""));
+    }
+    end_tile();
+}
+
 } // namespace
 
 void animations_startup(const Json& args, bool run) {
@@ -287,6 +373,8 @@ void animations_page(App& app) {
     export_tile(app);
     ImGui::Spacing();
     import_tile(app);
+    ImGui::Spacing();
+    ride_tile(app);
 }
 
 } // namespace studio::gui

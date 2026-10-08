@@ -54,7 +54,13 @@ In the window: COSMETICS > OWN BOARD ITEM. Alternatively, pick a truck in BROWSE
   item only is not possible: they are shared meshes.
 - The scooter's parts all get the donor's one material section, so it takes the truck's look (its appearance
   preset). The separate colours of the model do not survive.
-- Players without the mod see the truck that was cloned.
+- **Multiplayer.** Mods live on each player's own PC; a server only passes the item each player wears.
+  - Players who **have this mod too** see the scooter on whoever picked it, and normal boards on everyone else.
+    That is the point of a new item rather than a replaced mesh.
+  - Players **without the mod** do not have the scooter's model, so they cannot see it. What they see on you
+    instead (a default truck, nothing, or a refusal) depends on how the game and ReSkate's server handle an item
+    ID they do not know. That is untested.
+  - Share the mod with the people you ride with.
 - Remove Razor_Scooter_v2 first (PROJECT & MODS > TAKE IT OUT), or every deck is still the scooter.
 
 ## Testing on DA-PC
@@ -65,6 +71,9 @@ In the window: COSMETICS > OWN BOARD ITEM. Alternatively, pick a truck in BROWSE
    - picking it shows the scooter frame on the board;
    - other trucks look normal;
    - riding and pushing still work.
+3. Multiplayer, with a second player:
+   - if they also install the mod, they should see the scooter on you and their own board as normal;
+   - if they don't have the mod, note what they see on you, and whether the server lets you join at all.
 3. If it fails, report back what happened:
    - **The import fails with "to a native material section"**: try the other section names `mesh info <donor
      mesh>` lists, with `--section`.

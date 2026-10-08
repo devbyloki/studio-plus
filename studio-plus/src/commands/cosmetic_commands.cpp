@@ -513,7 +513,9 @@ Json run_new_board_part(Context& c, const Json& a) {
     out["notes"] = Json::array({
         "In game, pick the new item in the trucks list: it draws your model where the trucks go. The deck and wheels "
         "you pick still draw too; only the trucks are replaced.",
-        "Everyone else's boards are unchanged, and players without the mod see the truck you cloned."});
+        "Everyone else's boards are unchanged. In multiplayer, players who have this mod too see the scooter on you; "
+        "players without it cannot (mods are on each player's own PC), and what they see instead depends on how the "
+        "game handles an item it does not know: test it."});
     return out;
 }
 
